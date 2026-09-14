@@ -4,16 +4,17 @@ Six small models, one job each, swapped in and out of an 8 GB GPU. A runner
 decides who goes next and a verifier that never sees the candidate answer decides
 whether it is done.
 
-The idea is not new. A controller model handing sub-tasks to specialist models is
-HuggingGPT, trying a cheap model before an expensive one is a cascade (FrugalGPT),
-and every multi-agent framework gives each role its own model. What those write-ups
-mostly skip is the control: one model given the same scaffolding. So the question
-here is narrower. Does splitting the work across small models from different
-families buy anything over one 9B, or one 4B, or one 4B playing all six parts, each
-with the same tools, retries and verifier? The 9B with no scaffolding at all is the
-floor. My bet, written down before running anything ([eval/PREREG.md](eval/PREREG.md)):
-not accuracy. Maybe reliability and cost. The numbers are in
-[eval/REPORT.md](eval/REPORT.md) and summarized below.
+I came up with this on my own, then went reading and found the neighbours: a
+controller model handing sub-tasks to specialists is HuggingGPT, trying a cheap model
+before an expensive one is a cascade (FrugalGPT), and every multi-agent framework
+gives each role its own model. What almost none of them run is the control, one model
+given the same scaffolding, so what they show is that the scaffolding helps, not that
+the split does. So the question here is narrower. Does splitting the work across
+small models from different families buy anything over one 9B, or one 4B, or one 4B
+playing all six parts, each with the same tools, retries and verifier? The 9B with no
+scaffolding at all is the floor. My bet, written down before running anything
+([eval/PREREG.md](eval/PREREG.md)): not accuracy. Maybe reliability and cost. The
+numbers are in [eval/REPORT.md](eval/REPORT.md) and summarized below.
 
 Design notes are in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) (Chinese),
 what changed and why in [docs/DECISIONS.md](docs/DECISIONS.md).
