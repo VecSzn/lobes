@@ -55,8 +55,8 @@ models:
 providers:
   local:    { type: openai, base_url: http://127.0.0.1:8080/v1 }
   lmstudio: { type: openai, base_url: http://127.0.0.1:1234/v1 }
-  openai:   { type: openai, base_url: https://api.openai.com/v1, api_key: ${OPENAI_API_KEY} }
-  deepseek: { type: openai, base_url: https://api.deepseek.com/v1, api_key: ${DEEPSEEK_API_KEY} }
+  openai:   { type: openai, base_url: https://api.openai.com/v1, api_key: "${OPENAI_API_KEY}" }
+  deepseek: { type: openai, base_url: https://api.deepseek.com/v1, api_key: "${DEEPSEEK_API_KEY}" }
 
 # a lobe is filled with "provider/model", or a non-LLM implementation name.
 profile: specialists
