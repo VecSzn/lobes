@@ -194,6 +194,21 @@ def test_effort_samples(tmp_path):
         runner.effort({"effort": "ultra"})
 
 
+def test_seed_per_call(tmp_path, monkeypatch):
+    """the eval fixes the seed; until the call index was folded in, every hot sample came back identical"""
+    seeds = []
+    monkeypatch.setattr(runner.providers, "chat",
+                        lambda p, m, msgs, **kw: (seeds.append(kw["seed"]), Reply("{}", {}, None, {}, 1, {}))[1])
+    monkeypatch.setattr(runner.ModelManager, "ensure", lambda self, name: None)
+    cfg = config.load()
+    cfg["_root"], cfg["seed"] = tmp_path, 7
+    ctx = runner.Ctx(cfg, "specialists", runner.Trace(tmp_path / "trace.jsonl"), tmp_path)
+    st = _state("who wrote it", None, "qa")
+    for _ in range(3):
+        ctx.chat(st, "reasoning", [])
+    assert seeds == [7, 8, 9]
+
+
 def test_reflect_and_score(tmp_path):
     from lobes.lobe import reasoning
     st = _state("who wrote it", "Alice", "qa")

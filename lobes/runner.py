@@ -119,9 +119,10 @@ class Ctx:
                 self.trace.write("model", lobe=lobe, name=name, op=op, ms=ms, vram_mb=vram)
                 state.swaps += op == "load"
         mcfg = self.cfg["models"].get(model, {})
+        seed = self.cfg.get("seed")   # one seed per call: with the same seed every hot sample came back identical
         r = providers.chat(self.cfg["providers"][prov], model, messages, schema=schema, images=images,
-                           thinking=thinking if mcfg.get("thinking") else None,
-                           temperature=temperature, max_tokens=max_tokens, seed=self.cfg.get("seed"))
+                           thinking=thinking if mcfg.get("thinking") else None, temperature=temperature,
+                           max_tokens=max_tokens, seed=None if seed is None else seed + len(state.calls))
         toks = r.usage.get("total_tokens", 0)
         for k in ("prompt_tokens", "completion_tokens", "total_tokens"):
             state.usage[k] = state.usage.get(k, 0) + r.usage.get(k, 0)

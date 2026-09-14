@@ -150,9 +150,9 @@ class Vram(threading.Thread):
                 self.peak = max(self.peak, int(line))
 
 
-def run_item(cfg, cond, seed, suite, item, vram):
+def run_item(cfg, cond, seed, suite, item, vram, tag=""):
     c = dict(cfg, seed=seed, **{k: v for k, v in CONDITIONS[cond].items() if k != "profile"})
-    task_id = f"eval-{cond}-s{seed}-{item['id']}"
+    task_id = f"eval-{tag + '-' if tag else ''}{cond}-s{seed}-{item['id']}"   # tagged runs keep their own traces
     shutil.rmtree(cfg["_root"] / "runs" / task_id, ignore_errors=True)
     vram.peak = 0
     t0 = time.perf_counter()
@@ -212,7 +212,7 @@ def main(cfg, conditions, seeds, quick=False, suites=None, tag=""):
                 for item in items:
                     if (suite, item["id"]) in done:
                         continue
-                    rec = run_item(cfg, cond, seed, suite, item, vram)
+                    rec = run_item(cfg, cond, seed, suite, item, vram, tag)
                     with open(out, "a", encoding="utf-8") as f:
                         f.write(json.dumps(rec, ensure_ascii=False) + "\n")
                     print(f"{cond} s{seed} {suite} {item['id']}: {'ok' if rec['correct'] else 'x '} {rec['ms']} ms "
