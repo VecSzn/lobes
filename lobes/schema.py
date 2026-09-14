@@ -46,6 +46,7 @@ class Envelope(BaseModel):
 
 class Verdict(BaseModel):
     verdict: Literal["PASS", "RETRY", "VERIFY_WITH_TOOL", "CONFLICT"]
+    basis: Literal["evidence", "consistency", "none"] = "none"   # what a PASS rests on; code fills this, never the model
     failed_claims: list[str] = []
     proposed_check: ToolCall | None = None
     notes: str = ""

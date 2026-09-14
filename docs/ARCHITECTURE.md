@@ -106,11 +106,24 @@ Q4_K_M，f16 KV，16K 上下文：
 | gemma-4-E4B Q4_0 + mmproj | 4.59 + 0.56 | 没查 | | 5.8 左右 |
 | gemma-4-12B qat | 6.98 | | | 塞不下，只能部分放 CPU |
 
-V0 常驻 4B+mmproj 和 0.8B，5.5G，剩 1G 余量。升级到 9B 时先卸掉常驻的（一秒内），再加载 9B，峰值 6.1G。不够的话 `-ctk q8_0 -ctv q8_0` 把 KV 砍半。
+上面是估的。实测（2026-09-14，b10951，ctx 16384，4 slots，nvidia-smi 增量，加载后各生成 512 token）：
+
+| 模型 | 显存 MB | 热加载 ms | 卸载 ms | 生成 tok/s |
+|---|---|---|---|---|
+| lfm2.5-1.2b（CPU 常驻） | 0 | | | 77 |
+| qwen3.5-2b + mmproj | 2542 | 3609 | 655 | 119 |
+| qwen3.5-4b | 3396 | 2351–4056 | 675 | 62 |
+| qwen3.5-4b + mmproj | 4262 | 3199 | 672 | 62 |
+| granite-h-micro | 2348 | 1522–2767 | 712 | 81 |
+| gemma4-e2b | 1676 | 1929–2351 | 691 | 107 |
+| nemotron-nano-4b | 3149 | 1929 | 646 | 69 |
+| qwen3.5-9b IQ4_XS | 5187 | 2812 | 709 | 41 |
+
+桌面基线 1.43G。gemma 估 3.9G 实际 1.7G，9B 估 6.1G 实际 5.2G，其余差不多。specialists 的换入链 reasoning→motor→verifier→language 跑一遍，LRU 按预期卸最久没用的，nvidia-smi 峰值 7459 MB（增量 6031，预算 6400 以内）。不够的话 `-ctk q8_0 -ctv q8_0` 把 KV 砍半。
 
 内存方面所有 GGUF 走 mmap，0.56+1.28+2.74+0.67+5.17 大概 10.4G 全钉在页缓存里，32G 绰绰有余，所以换模型永远是热加载。
 
-加载延迟我没实测，按 NVMe 估：2.7G 冷加载三到六秒、热一到三秒；5.2G 冷五到十秒、热三到五秒；router 起子进程再加一秒；卸载一秒内。V0 里会把每次加载卸载的耗时和 nvidia-smi 读数记下来，用实测数替换估算。
+加载延迟见上表：热加载 1.5 到 4 秒（含 router 起子进程），卸载 0.7 秒左右，一次任务换三四个模型大约多花 10 秒。
 
 缓存策略：启动时把所有 GGUF 顺序读一遍钉进页缓存；模型管理器按显存预算而不是按个数做 LRU；验证器连续两次 CONFLICT 就提前开始加载 9B；共享的 system prompt 前缀靠 llama-server 自带的 prompt cache 复用。
 
@@ -125,7 +138,7 @@ V0 常驻 4B+mmproj 和 0.8B，5.5G，剩 1G 余量。升级到 9B 时先卸掉�
 | reasoning 推理 | Qwen3.5-4B | Qwen | Q4_K_M 2.74G | GPU 换入 |
 | motor 工具 | granite-4.0-h-micro | IBM | Q4_K_M 1.94G | GPU 换入 |
 | language 语言 | gemma-4-E2B-it | Google | Q4_K_M 3.11G | GPU 换入 |
-| verifier 验证 | Nemotron-3-Nano-4B | NVIDIA | Q4_K_M 2.84G | GPU 换入 |
+| verifier 验证 | gemma-4-E2B-it（原定 Nemotron-3-Nano-4B，盲解答出标点，换了，见 DECISIONS） | Google | 同上 | GPU 换入 |
 | escalate 升级 | Qwen3.5-9B / 远端 API | | IQ4_XS 5.17G | 全卸了再进 |
 
 六个 lobe 五家。只有感知和推理都是 Qwen，因为 mmproj 是跟模型走的，而且 2B 看截图明显比 LFM2.5-VL-1.6B 强，这个地方不值得为了多样性牺牲。granite 用 h-micro 不用 micro，h 是混合 Mamba2 结构，KV 小得多。Nemotron-3-Nano-4B 也是混合 Mamba-Transformer（42 层只有少数是注意力）。gemma-4-E2B 一个 KV 头，KV 也小。
@@ -138,7 +151,7 @@ Qwen3.5 的 thinking 用 `chat_template_kwargs: {enable_thinking: false}` 关，
 
 ## 谁常驻谁换入
 
-`specialists` 下一个普通文本任务的走法：executive（CPU）看一眼决定要不要工具和推理 → reasoning 4B 进 GPU（3.6G）→ 要调工具就把 motor granite 也进来（1.9G 加 KV，两个一起 5.8G，挤得下）→ 验证时 Nemotron 3.5G 进不来了，先按 LRU 把 motor 卸掉；还不够就卸 4B（重试时再热加载三秒）→ 最后 language gemma 进来时把 verifier 卸掉。一趟下来换三四次，加载开销十来秒。这就是 `specialists` 的代价，评测会把它记下来。executive 能自己答的小问题走快速路径，一次模型都不换。
+`specialists` 下一个普通文本任务的走法：executive（CPU）看一眼决定要不要工具和推理 → reasoning 4B 进 GPU（3.6G）→ 要调工具就把 motor granite 也进来（1.9G 加 KV，两个一起 5.8G，挤得下）→ 验证和 language 都是 gemma 1.7G，进来时按 LRU 把 motor 卸掉，4B 留着。一趟下来换两次，加载开销四五秒。（第一版验证用 Nemotron 3.2G，进不来要把 4B 也卸掉，推理验证之间来回换，一道乘法题换了 9 次 58 秒，所以改了。）这就是 `specialists` 的代价，评测会把它记下来。executive 能自己答的小问题走快速路径，一次模型都不换。
 
 `shared` 下 4B 常驻不动，只有升级 9B 时全卸。
 
@@ -235,7 +248,7 @@ V3：按显存预算的 LRU 和预测性预加载，异家族裁判，CPU 上跑
                perception（Qwen3.5-2B，有图才进）
                reasoning（Qwen3.5-4B，按 schema 出断言 / 工具请求）
                motor（granite，把工具请求变成合法调用）→ python 工具 → 代码做证据比对
-               verifier（Nemotron，证据检查 + 盲解）→ PASS / RETRY / VERIFY_WITH_TOOL / CONFLICT
+               verifier（gemma，证据检查 + 盲解）→ PASS / RETRY / VERIFY_WITH_TOOL / CONFLICT
                language（gemma，把信封写成人话；shared 下是 passthrough）
                CONFLICT → 换入 9B 或远端 API
 模型管理器按显存预算 LRU 换入换出，每次换都记时间和 nvidia-smi

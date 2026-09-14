@@ -15,8 +15,13 @@ class ModelManager:
         self.models = cfg["models"]
         self.base = f"http://{cfg['llama']['host']}:{cfg['llama']['port']}"
         self.budget = cfg["llama"]["vram_budget_mb"]
-        self.last_used = {}
+        self.last_used = {}  # name -> use counter; not time.time(), which ticks every 15 ms on Windows
+        self.uses = 0
         self.events = []  # (name, "load"|"unload", ms, vram_after_mb)
+
+    def _touch(self, name):
+        self.uses += 1
+        self.last_used[name] = self.uses
 
     # --- router api ---
     def alive(self):
@@ -40,14 +45,14 @@ class ModelManager:
         if name not in self.models:
             raise KeyError(f"unknown model {name}, add it to lobes.yaml")
         if self.status().get(name) == "loaded":
-            self.last_used[name] = time.time()
+            self._touch(name)
             return 0
         self._free(self.models[name]["vram_mb"])
         t0 = time.perf_counter()
         httpx.post(self.base + "/models/load", json={"model": name}, timeout=30).raise_for_status()
         self._wait(name, "loaded")
         ms = int((time.perf_counter() - t0) * 1000)
-        self.last_used[name] = time.time()
+        self._touch(name)
         self.events.append((name, "load", ms, self.vram_now_mb()))
         return ms
 

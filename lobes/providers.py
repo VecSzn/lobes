@@ -19,6 +19,7 @@ class Reply:
     reasoning: str | None         # <think> content if the server split it out
     usage: dict
     ms: int
+    timings: dict                 # llama-server only: prompt_n, predicted_n, predicted_per_second ...
 
 
 def _image_part(path):
@@ -64,6 +65,7 @@ def chat(provider, model, messages, *, schema=None, images=None, thinking=None,
         reasoning=msg.get("reasoning_content") or msg.get("reasoning"),
         usage=j.get("usage", {}),
         ms=int((time.perf_counter() - t0) * 1000),
+        timings=j.get("timings", {}),
     )
 
 
