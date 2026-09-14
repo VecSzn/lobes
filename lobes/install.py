@@ -1,5 +1,7 @@
 """Download llama.cpp and the GGUFs a profile needs, then write the router preset file."""
 import os
+import subprocess
+import sys
 import zipfile
 from pathlib import Path
 
@@ -44,13 +46,26 @@ def install_llama(cfg, root: Path):
     if find_server(bindir):
         return
     tag, cuda = cfg["llama"]["release"], cfg["llama"]["cuda"]
-    base = f"https://github.com/ggml-org/llama.cpp/releases/download/{tag}/"
-    for name in (f"llama-{tag}-bin-win-cuda-{cuda}-x64.zip", f"cudart-llama-bin-win-cuda-{cuda}-x64.zip"):
-        z = root / "bin" / name
-        download(base + name, z)
-        zipfile.ZipFile(z).extractall(bindir)
+    if sys.platform != "win32":
+        build_llama(tag, bindir)
+    else:
+        base = f"https://github.com/ggml-org/llama.cpp/releases/download/{tag}/"
+        for name in (f"llama-{tag}-bin-win-cuda-{cuda}-x64.zip", f"cudart-llama-bin-win-cuda-{cuda}-x64.zip"):
+            z = root / "bin" / name
+            download(base + name, z)
+            zipfile.ZipFile(z).extractall(bindir)
     if not find_server(bindir):
         raise RuntimeError(f"no llama-server in {bindir}; the release layout changed, look inside and fix find_server")
+
+
+def build_llama(tag, bindir: Path):
+    """Linux: the release has no CUDA binary, so build llama-server from the tagged source. Needs git, cmake, nvcc."""
+    src = bindir / "llama.cpp"
+    if not (src / "CMakeLists.txt").exists():
+        subprocess.run(["git", "clone", "--depth", "1", "--branch", tag, "https://github.com/ggml-org/llama.cpp", str(src)], check=True)
+    subprocess.run(["cmake", "-B", "build", "-DGGML_CUDA=ON", "-DBUILD_SHARED_LIBS=OFF", "-DLLAMA_CURL=OFF",
+                    "-DCMAKE_BUILD_TYPE=Release"], cwd=src, check=True)
+    subprocess.run(["cmake", "--build", "build", "--config", "Release", "-j", "--target", "llama-server"], cwd=src, check=True)
 
 
 # --- models ---

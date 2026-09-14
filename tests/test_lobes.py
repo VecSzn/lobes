@@ -127,6 +127,128 @@ def test_state_machine(tmp_path, monkeypatch):
     assert kinds[:4] == ["start", "intake", "plan", "tool"] and kinds[-1] == "final" and kinds.count("verdict") == 2
 
 
+class FakeCtx:
+    """Enough of runner.Ctx for the verifier: every lobe is a model, chat replays canned replies."""
+    def __init__(self, tmp_path, replies, **cfg):
+        self.workdir, self.rundir, self.replies, self.cfg = tmp_path, tmp_path, iter(replies), cfg
+        self.effort = runner.effort(cfg)
+        self.trace = type("T", (), {"write": staticmethod(lambda *a, **k: None)})
+
+    def is_model(self, lobe):
+        return True
+
+    def chat(self, state, lobe, messages, **kw):
+        return _reply(next(self.replies))
+
+
+def _state(goal, answer, task_class, tools_out=None, images=()):
+    st = runner.TaskState("t", goal, list(images))
+    st.task_class = task_class
+    st.tool_results = {f"tool_{i}": {"stdout": o, "exit": 0} for i, o in enumerate(tools_out or [])}
+    st.candidate = Envelope(kind="step_result", goal=goal, answer=answer, next=Next(action="answer"))
+    return st
+
+
+def test_verifier_paths(tmp_path):
+    goal = 'def dbl(x):\n    """\n    >>> dbl(2)\n    4\n    """'
+    v = verifier.verify(FakeCtx(tmp_path, []), _state(goal, "def dbl(x):\n    return 2 * x", "code"))
+    assert (v.verdict, v.basis) == ("PASS", "evidence")                       # the task's own examples, no model
+    v = verifier.verify(FakeCtx(tmp_path, []), _state(goal, "def dbl(x):\n    return x", "code"))
+    assert v.verdict == "RETRY" and "0/1" in v.notes
+    # a blind test that raises inside itself is the test's fault, one that asserts is the candidate's
+    st = _state("write add(a, b)", "def add(a, b):\n    return a + b", "code")
+    v = verifier.verify(FakeCtx(tmp_path, [{"test": "assert add(1, 2) == 3\nhelper()"}]), st)
+    assert (v.verdict, v.basis) == ("PASS", "none") and "test itself broke" in v.notes
+    v = verifier.verify(FakeCtx(tmp_path, [{"test": "assert add(1, 2) == 4"}]), st)
+    assert v.verdict == "RETRY"
+    # a bare number on a task misfiled as code is not code: blind re-solve, and its answer wins when a tool printed it
+    st = _state("write 12345 in base 7", "240114", "code", ["50664"])
+    v = verifier.verify(FakeCtx(tmp_path, []), st)
+    assert v.verdict == "RETRY" and "not appear" in v.notes                    # evidence() sees the new number first
+    st.retries = 1
+    st.candidate.answer = "the result is 240114 in base 7"
+    v = verifier.verify(FakeCtx(tmp_path, [{"answer": "50664", "check": None}]), st)
+    assert (v.verdict, v.basis, v.answer) == ("PASS", "evidence", "50664")
+    # closed-book trivia: disagreement without anything to check is not a conflict
+    st = _state("who wrote it", "Alice", "qa")
+    v = verifier.verify(FakeCtx(tmp_path, [{"answer": "Bob", "check": None}]), st)
+    assert (v.verdict, v.basis) == ("PASS", "none")
+    st.candidate.confidence.basis = "consistency"
+    v = verifier.verify(FakeCtx(tmp_path, [{"answer": "Bob", "check": None}]), st)
+    assert (v.verdict, v.basis) == ("PASS", "consistency")
+
+
+def test_effort_samples(tmp_path):
+    """closed-book qa draws as many samples as the level says; unanimity is the only route to consistency"""
+    from lobes.lobe import reasoning
+    env = {"kind": "step_result", "goal": "g", "answer": "Alice", "next": {"action": "answer"}, "claims": []}
+    for level, n in (("low", 1), ("medium", 3), ("high", 5), ("max", 12)):
+        ctx = FakeCtx(tmp_path, [env] * n, effort=level)
+        out = reasoning.solve(ctx, _state("who wrote it", None, "qa"))
+        assert next(ctx.replies, None) is None, level                    # every reply consumed, no extra call made
+        assert (out.confidence.basis == "consistency") == (n > 1), level
+    ctx = FakeCtx(tmp_path, [env, dict(env, answer="Bob"), env], effort="medium")
+    assert reasoning.solve(ctx, _state("who wrote it", None, "qa")).confidence.basis == "self"
+    assert runner.effort({"effort": "auto"}) is runner.EFFORT["medium"]
+    with pytest.raises(ValueError):
+        runner.effort({"effort": "ultra"})
+
+
+def test_reflect_and_score(tmp_path):
+    from lobes.lobe import reasoning
+    st = _state("who wrote it", "Alice", "qa")
+    reasoning.reflect(FakeCtx(tmp_path, [{"flaw": "wrong person", "answer": "Bob"}], effort="high"), st)
+    assert st.candidate.answer == "Bob" and "wrong person" in st.candidate.uncertainties[-1]
+    reasoning.reflect(FakeCtx(tmp_path, [{"flaw": None, "answer": "Carol"}], effort="high"), st)
+    assert st.candidate.answer == "Bob"                                      # no flaw named, no change
+    st = _state("what is 17 * 23", "391", "math", ["391"])
+    reasoning.reflect(FakeCtx(tmp_path, [], effort="high"), st)              # tool-backed: not even asked
+    assert st.candidate.answer == "391"
+    assert verifier.score(Verdict(verdict="PASS", basis="evidence")) > verifier.score(Verdict(verdict="PASS")) \
+        > verifier.score(Verdict(verdict="VERIFY_WITH_TOOL")) > verifier.score(Verdict(verdict="RETRY"))
+
+
+def test_auto_climb_and_search(tmp_path, monkeypatch):
+    """auto: a math answer the tool contradicts is retried at medium, then the effort climbs to high and xhigh
+    (search and reflection on) before the run gives up; the eval config has no model ladder"""
+    from lobes.lobe import language, reasoning
+    cfg = config.load()
+    cfg["_root"], cfg["effort"], cfg["no_escalate"] = tmp_path, "auto", True
+
+    def fake_chat(self, state, lobe, messages, *, schema=None, thinking=None, temperature=0.2, max_tokens=2048, images=None):
+        if lobe == "executive":
+            return _reply({"steps": ["compute"], "first": "tool"})
+        if lobe == "motor":
+            return _reply({"why": "compute", "call": {"name": "python", "args": {"code": "print(17*23)"}}})
+        if lobe == "language":
+            return _reply({"answer": "392"})
+        if schema is reasoning.REFLECT:
+            return _reply({"flaw": "the tool printed 391", "answer": "392"})     # names a flaw, keeps the answer
+        if lobe == "reasoning":
+            return _reply({"kind": "step_result", "goal": state.goal, "answer": "392", "next": {"action": "answer"},
+                           "claims": [{"id": "c1", "text": "17 * 23 = 392", "support": "tool", "evidence": "tool_0"}]})
+        raise AssertionError(lobe)
+
+    monkeypatch.setattr(runner.Ctx, "chat", fake_chat)
+    state = runner.run(cfg, "what is 17 * 23", profile="specialists")
+    trace = [json.loads(l) for l in (tmp_path / "runs" / state.task_id / "trace.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert [t["level"] for t in trace if t["kind"] == "effort"] == ["high", "xhigh"] and state.effort == "xhigh"
+    assert all(v.verdict == "RETRY" for v in state.verdicts) and len(state.verdicts) == 3 + 4 + 5
+    assert any(t["kind"] == "search" for t in trace) and any(t["kind"] == "reflect" for t in trace)
+    assert state.answer == language.HEDGE + "392"
+
+
+def test_hedge_and_override(tmp_path):
+    from lobes.lobe import language
+    ctx = FakeCtx(tmp_path, [])
+    ctx.is_model = lambda lobe: False
+    st = _state("who wrote it", "Alice", "qa")
+    st.verdicts = [Verdict(verdict="PASS", basis="none")]
+    assert language.say(ctx, st).answer == language.HEDGE + "Alice"
+    st.verdicts = [Verdict(verdict="PASS", basis="consistency")]
+    assert language.say(ctx, st).answer == "Alice"
+
+
 def test_language_guard():
     from lobes.lobe.language import faithful
     assert faithful("17 x 23 = 391", "391", "what is 17 * 23")

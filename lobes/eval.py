@@ -14,7 +14,7 @@ import httpx
 
 from . import config
 from .lobe.verifier import norm, nums, same
-from .runner import MAX_STEPS, run
+from .runner import EFFORT, run
 
 DATA = config.ROOT / "eval" / "data"
 RESULTS = config.ROOT / "eval" / "results"
@@ -156,7 +156,7 @@ def run_item(cfg, cond, seed, suite, item, vram):
     shutil.rmtree(cfg["_root"] / "runs" / task_id, ignore_errors=True)
     vram.peak = 0
     t0 = time.perf_counter()
-    rec = {"cond": cond, "seed": seed, "suite": suite, "id": item["id"], "task_id": task_id}
+    rec = {"cond": cond, "seed": seed, "suite": suite, "id": item["id"], "task_id": task_id, "effort": c.get("effort") or "medium"}
     try:
         st = run(c, item["prompt"], profile=CONDITIONS[cond]["profile"], images=item.get("images"), task_id=task_id)
     except Exception as e:                      # one broken item must not kill the night
@@ -175,8 +175,8 @@ def run_item(cfg, cond, seed, suite, item, vram):
     rec.update(answer=(st.answer or "")[:1000], correct=correct, abstained=abstained, task_class=st.task_class,
                tokens=st.usage, ms=st.ms(), lobe_ms=lobe_ms, swaps=st.swaps, swap_ms=swap_ms, vram_peak_mb=vram.peak,
                steps=st.steps, retries=st.retries, escalations=st.escalations, calls=len(st.calls),
-               basis=last.basis if last else None, passed=bool(last and last.verdict == "PASS"),
-               stuck=st.steps >= MAX_STEPS and not (last and last.verdict == "PASS"))
+               basis=last.basis if last else None, passed=bool(last and last.verdict == "PASS"), level=st.effort,
+               stuck=st.steps >= EFFORT[st.effort]["steps"] and not (last and last.verdict == "PASS"))
     if suite in ("gsm8k", "tools"):             # lenient twin of the strict judge, reported next to it
         rec["gold_in_answer"] = item.get("gold", item.get("answer")).replace(",", "") in nums(st.answer or "")
     return rec
@@ -190,10 +190,11 @@ def plan(cond, seed, quick, suites=None):
         yield suite, load_suite(suite)[:n]
 
 
-def main(cfg, conditions, seeds, quick=False, suites=None):
+def main(cfg, conditions, seeds, quick=False, suites=None, tag=""):
     sys.stdout.reconfigure(errors="replace")  # windows console is gbk; an umlaut in an answer killed a run
     fetch()
-    RESULTS.mkdir(parents=True, exist_ok=True)
+    results = RESULTS / tag                   # a tag keeps one code version's run apart from another's
+    results.mkdir(parents=True, exist_ok=True)
     vram = Vram()
     vram.start()
     for cond in conditions:
@@ -203,7 +204,7 @@ def main(cfg, conditions, seeds, quick=False, suites=None):
             print(f"{cond}: skipped, {prov} has no api key")
             continue
         for seed in seeds:
-            out = RESULTS / f"{'quick-' if quick else ''}{cond}-s{seed}.jsonl"
+            out = results / f"{'quick-' if quick else ''}{cond}-s{seed}.jsonl"
             done = set()
             if out.exists():
                 done = {(json.loads(l)["suite"], json.loads(l)["id"]) for l in out.read_text(encoding="utf-8").splitlines() if l.strip()}
@@ -218,10 +219,10 @@ def main(cfg, conditions, seeds, quick=False, suites=None):
                           f"{rec.get('tokens', {}).get('total_tokens', 0)} tok {rec.get('answer', rec.get('error', ''))[:60]!r}", flush=True)
 
 
-def report(quick=False):
+def report(quick=False, tag=""):
     """Markdown tables from eval/results; the narrative in REPORT.md is written by hand."""
     recs = []
-    for p in sorted(RESULTS.glob(f"{'quick-' if quick else ''}[A-F]*-s*.jsonl")):
+    for p in sorted((RESULTS / tag).glob(f"{'quick-' if quick else ''}[A-F]*-s*.jsonl")):
         recs += [json.loads(l) for l in p.read_text(encoding="utf-8").splitlines() if l.strip()]
     recs = [r for r in recs if "error" not in r]
     conds = [c for c in CONDITIONS if any(r["cond"] == c for r in recs)]
@@ -248,6 +249,8 @@ def report(quick=False):
     table("stuck loop %", lambda rs: 100 * sum(r["stuck"] for r in rs) / len(rs))
     table("VRAM peak MB (max over items, includes the desktop)", lambda rs: max(r["vram_peak_mb"] for r in rs))
     table("simpleqa: abstained %", lambda rs: 100 * sum(r["abstained"] for r in rs) / len(rs), ["simpleqa"])
+    table("simpleqa: confident correct % (correct and not abstained)",   # v2 hedges; the v1 judge alone would credit a hedged right guess
+          lambda rs: 100 * sum(r["correct"] and not r["abstained"] for r in rs) / len(rs), ["simpleqa"])
     table("simpleqa: empty answer %", lambda rs: 100 * sum(not r["answer"].strip() for r in rs) / len(rs), ["simpleqa"])
     table("simpleqa: unsupported % (answered, not abstained, wrong)",
           lambda rs: 100 * sum(bool(r["answer"].strip()) and not r["abstained"] and not r["correct"] for r in rs) / len(rs),

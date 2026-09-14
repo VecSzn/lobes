@@ -59,6 +59,11 @@ providers:
   openai:   { type: openai, base_url: https://api.openai.com/v1, api_key: "${OPENAI_API_KEY}" }
   deepseek: { type: openai, base_url: https://api.deepseek.com/v1, api_key: "${DEEPSEEK_API_KEY}", json: object }   # no json_schema there
 
+# low | medium | high | xhigh | max | auto: thinking, samples, retries, steps, reflection and search width scale
+# together (EFFORT in runner.py). auto starts at medium and climbs to high, then xhigh, each time the retries run
+# out, before the escalate model takes over. xhigh and max think past 16k tokens, so raise ctx first.
+effort: medium
+
 # a lobe is filled with "provider/model", or a non-LLM implementation name.
 profile: specialists
 profiles:

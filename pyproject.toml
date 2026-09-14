@@ -20,6 +20,7 @@ dependencies = [
 [project.optional-dependencies]
 dev = ["pytest>=8"]
 eval = ["pandas>=2", "pyarrow>=15"]
+ocr = ["rapidocr-onnxruntime>=1.4"]   # second reader for images, cpu, ~2 s per image
 
 [project.scripts]
 lobes = "lobes.cli:app"
@@ -30,3 +31,6 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 include = ["lobes*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]      # on linux bin/ holds the llama.cpp source tree, which has its own tests
