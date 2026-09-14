@@ -61,7 +61,7 @@ Cost, seed 0 (tokens and seconds are means per item; swaps are model loads per i
 | multistep | 5181  | 4480  | 5443  | 83   | 38  | 55   | 2.0     | 2.4     |
 
 multistep across seeds (accuracy %, s0 / s1 / s2): A 60 / 60 / 60, D 90 / 70 / 70,
-E 90 / 70 / (running). Stuck-loop rate is 0 for every condition on every suite.
+E 90 / 70 / 80. Stuck-loop rate is 0 for every condition on every suite.
 
 SimpleQA breakdown (%): abstained 0 / 0 / 0, empty answer 37 / 33 / 27, answered and
 wrong 60 / 63 / 70 for A / D / E. Nobody abstains in v1; the 3% is one item.
@@ -101,7 +101,7 @@ On the 4070 v1 run, seed 0. B and C pending where noted.
 - H1 (A >= D on gsm8k and humaneval): holds. 90 = 90 and 90 > 63.
 - H2 (reliability): the stuck-loop half is vacuous, every condition is at 0, so the
   metric separated nothing. Variance on multistep is not lower for D or E (std 9 vs
-  A's 0); what they have is 17-23 more points of mean accuracy. The simpleqa half
+  A's 0); what they have is 17-20 more points of mean accuracy. The simpleqa half
   needs B's unsupported rate (pending); against A it fails, D's 63 is not 10 below A's
   60. As pre-registered, H2 does not hold. The multistep gain is real and was not the
   claim.
