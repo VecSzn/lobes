@@ -127,6 +127,67 @@ def test_state_machine(tmp_path, monkeypatch):
     assert kinds[:4] == ["start", "intake", "plan", "tool"] and kinds[-1] == "final" and kinds.count("verdict") == 2
 
 
+class FakeCtx:
+    """Enough of runner.Ctx for the verifier: every lobe is a model, chat replays canned replies."""
+    def __init__(self, tmp_path, replies):
+        self.workdir, self.rundir, self.replies, self.cfg = tmp_path, tmp_path, iter(replies), {}
+        self.trace = type("T", (), {"write": staticmethod(lambda *a, **k: None)})
+
+    def is_model(self, lobe):
+        return True
+
+    def chat(self, state, lobe, messages, **kw):
+        return _reply(next(self.replies))
+
+
+def _state(goal, answer, task_class, tools_out=None, images=()):
+    st = runner.TaskState("t", goal, list(images))
+    st.task_class = task_class
+    st.tool_results = {f"tool_{i}": {"stdout": o, "exit": 0} for i, o in enumerate(tools_out or [])}
+    st.candidate = Envelope(kind="step_result", goal=goal, answer=answer, next=Next(action="answer"))
+    return st
+
+
+def test_verifier_paths(tmp_path):
+    goal = 'def dbl(x):\n    """\n    >>> dbl(2)\n    4\n    """'
+    v = verifier.verify(FakeCtx(tmp_path, []), _state(goal, "def dbl(x):\n    return 2 * x", "code"))
+    assert (v.verdict, v.basis) == ("PASS", "evidence")                       # the task's own examples, no model
+    v = verifier.verify(FakeCtx(tmp_path, []), _state(goal, "def dbl(x):\n    return x", "code"))
+    assert v.verdict == "RETRY" and "0/1" in v.notes
+    # a blind test that raises inside itself is the test's fault, one that asserts is the candidate's
+    st = _state("write add(a, b)", "def add(a, b):\n    return a + b", "code")
+    v = verifier.verify(FakeCtx(tmp_path, [{"test": "assert add(1, 2) == 3\nhelper()"}]), st)
+    assert (v.verdict, v.basis) == ("PASS", "none") and "test itself broke" in v.notes
+    v = verifier.verify(FakeCtx(tmp_path, [{"test": "assert add(1, 2) == 4"}]), st)
+    assert v.verdict == "RETRY"
+    # a bare number on a task misfiled as code is not code: blind re-solve, and its answer wins when a tool printed it
+    st = _state("write 12345 in base 7", "240114", "code", ["50664"])
+    v = verifier.verify(FakeCtx(tmp_path, []), st)
+    assert v.verdict == "RETRY" and "not appear" in v.notes                    # evidence() sees the new number first
+    st.retries = 1
+    st.candidate.answer = "the result is 240114 in base 7"
+    v = verifier.verify(FakeCtx(tmp_path, [{"answer": "50664", "check": None}]), st)
+    assert (v.verdict, v.basis, v.answer) == ("PASS", "evidence", "50664")
+    # closed-book trivia: disagreement without anything to check is not a conflict
+    st = _state("who wrote it", "Alice", "qa")
+    v = verifier.verify(FakeCtx(tmp_path, [{"answer": "Bob", "check": None}]), st)
+    assert (v.verdict, v.basis) == ("PASS", "none")
+    st.candidate.confidence.basis = "consistency"
+    v = verifier.verify(FakeCtx(tmp_path, [{"answer": "Bob", "check": None}]), st)
+    assert (v.verdict, v.basis) == ("PASS", "consistency")
+
+
+def test_hedge_and_override(tmp_path):
+    from lobes.lobe import language
+    ctx = FakeCtx(tmp_path, [])
+    ctx.is_model = lambda lobe: False
+    st = _state("who wrote it", "Alice", "qa")
+    st.verdicts = [Verdict(verdict="PASS", basis="none")]
+    assert language.say(ctx, st).answer == language.HEDGE + "Alice"
+    st.verdicts = [Verdict(verdict="PASS", basis="consistency")]
+    assert language.say(ctx, st).answer == "Alice"
+
+
 def test_language_guard():
     from lobes.lobe.language import faithful
     assert faithful("17 x 23 = 391", "391", "what is 17 * 23")

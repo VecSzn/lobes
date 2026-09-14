@@ -49,6 +49,7 @@ class Verdict(BaseModel):
     basis: Literal["evidence", "consistency", "none"] = "none"   # what a PASS rests on; code fills this, never the model
     failed_claims: list[str] = []
     proposed_check: ToolCall | None = None
+    answer: str | None = None        # a PASS that replaces the candidate's answer with a tool-backed one
     notes: str = ""
 
 

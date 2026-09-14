@@ -156,6 +156,8 @@ def run(cfg, goal, *, profile=None, images=None, task_id=None):
         state.verdicts.append(v)
         trace.write("verdict", **v.model_dump())
         if v.verdict == "PASS":
+            if v.answer:
+                state.candidate.answer = v.answer
             break
         if v.verdict == "VERIFY_WITH_TOOL" and v.proposed_check:
             run_tools(ctx, state, [v.proposed_check])
