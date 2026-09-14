@@ -129,7 +129,7 @@ class Ctx:
         state.calls.append((lobe, f"{prov}/{model}", r.ms, toks))
         self.trace.write("call", lobe=lobe, model=f"{prov}/{model}", ms=r.ms, tokens=toks, thinking=thinking,
                          temperature=temperature, parsed=r.data is not None if schema else None, finish=r.finish,
-                         text=r.text[:4000], reasoning=(r.reasoning or "")[:2000])
+                         forced=r.forced, text=r.text[:4000], reasoning=(r.reasoning or "")[:2000])
         return r
 
 

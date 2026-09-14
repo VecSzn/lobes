@@ -170,17 +170,18 @@ def run_item(cfg, cond, seed, suite, item, vram, tag=""):
     lobe_ms = {}
     for lobe, _, ms, _ in st.calls:
         lobe_ms[lobe] = lobe_ms.get(lobe, 0) + ms
-    swap_ms = 0
+    swap_ms = forced = 0
     for l in (cfg["_root"] / "runs" / task_id / "trace.jsonl").read_text(encoding="utf-8").splitlines():
         r = json.loads(l)
         if r["kind"] == "model":
             swap_ms += r["ms"]
+        forced += r["kind"] == "call" and bool(r.get("forced"))
     last = st.verdicts[-1] if st.verdicts else None
     rec.update(answer=(st.answer or "")[:1000], correct=correct, abstained=abstained, task_class=st.task_class,
                tokens=st.usage, ms=st.ms(), lobe_ms=lobe_ms, swaps=st.swaps, swap_ms=swap_ms, vram_peak_mb=vram.peak,
                steps=st.steps, retries=st.retries, escalations=st.escalations, calls=len(st.calls),
                basis=last.basis if last else None, passed=bool(last and last.verdict == "PASS"), level=st.effort,
-               stuck=st.steps >= EFFORT[st.effort]["steps"] and not (last and last.verdict == "PASS"))
+               stuck=st.steps >= EFFORT[st.effort]["steps"] and not (last and last.verdict == "PASS"), forced=forced)
     if suite in ("gsm8k", "tools"):             # lenient twin of the strict judge, reported next to it
         rec["gold_in_answer"] = item.get("gold", item.get("answer")).replace(",", "") in nums(st.answer or "")
     return rec
@@ -207,7 +208,7 @@ def raw_item(cfg, cond, suite, item, vram, rec):
                ms=int((time.perf_counter() - t0) * 1000), lobe_ms={"raw": r.ms},
                swaps=sum(op == "load" for _, op, _, _ in mm.events), swap_ms=sum(ms for _, op, ms, _ in mm.events),
                vram_peak_mb=vram.peak, steps=1, retries=0, escalations=0, calls=1, basis=None, passed=None,
-               stuck=False, finish=r.finish)
+               stuck=False, finish=r.finish, forced=int(r.forced))
     if suite in ("gsm8k", "tools"):
         rec["gold_in_answer"] = item.get("gold", item.get("answer")).replace(",", "") in nums(answer)
     return rec
@@ -278,6 +279,8 @@ def report(quick=False, tag=""):
     table("mean seconds", sec)
     table("mean swaps", lambda rs: statistics.mean(r["swaps"] for r in rs))
     table("stuck loop %", lambda rs: 100 * sum(r["stuck"] for r in rs) / len(rs))
+    table("items with a forced answer % (thinking hit its cap, answered from the partial reasoning)",
+          lambda rs: 100 * sum(bool(r.get("forced")) for r in rs) / len(rs))
     table("VRAM peak MB (max over items, includes the desktop)", lambda rs: max(r["vram_peak_mb"] for r in rs))
     table("simpleqa: abstained %", lambda rs: 100 * sum(r["abstained"] for r in rs) / len(rs), ["simpleqa"])
     table("simpleqa: confident correct % (correct and not abstained)",   # v2 hedges; the v1 judge alone would credit a hedged right guess

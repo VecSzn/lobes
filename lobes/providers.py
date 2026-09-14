@@ -22,9 +22,11 @@ class Reply:
     ms: int
     timings: dict                 # llama-server only: prompt_n, predicted_n, predicted_per_second ...
     finish: str | None = None     # "length" means the answer was cut off by max_tokens
+    forced: bool = False          # thinking hit the cap and the answer was forced out of the partial reasoning
 
 
 MIN_SIDE = 768   # OCRBench crops are often 200 px tall; the vision encoder reads them better blown up
+BUDGET_MSG = "Considering the limited time by the user, I have to give the solution based on the thinking directly now."
 
 
 def _image_part(path):
@@ -70,11 +72,24 @@ def chat(provider, model, messages, *, schema=None, images=None, thinking=None,
         headers["Authorization"] = f"Bearer {provider['api_key']}"
 
     t0 = time.perf_counter()
-    r = httpx.post(provider["base_url"].rstrip("/") + "/chat/completions", json=body, headers=headers, timeout=timeout)
-    r.raise_for_status()
-    j = r.json()
+    j = _post(provider, body, headers, timeout)
     msg = j["choices"][0]["message"]
+    reasoning = msg.get("reasoning_content") or msg.get("reasoning")
+    usage = j.get("usage", {})
+    forced = False
+    if j["choices"][0].get("finish_reason") == "length" and reasoning and not msg.get("content") and not provider.get("api_key"):
+        # thinking ate the whole cap. llama-server prefills a trailing assistant turn, and the chat template only
+        # closes the think block when content is non-empty, so the model answers from what it thought so far.
+        body["messages"] = messages + [{"role": "assistant", "reasoning_content": reasoning + "\n\n" + BUDGET_MSG,
+                                        "content": "{" if schema is not None else " "}]
+        body["max_tokens"] = 2500
+        j = _post(provider, body, headers, timeout)
+        msg = j["choices"][0]["message"]
+        usage = {k: usage.get(k, 0) + j.get("usage", {}).get(k, 0) for k in ("prompt_tokens", "completion_tokens", "total_tokens")}
+        forced = True
     text = msg.get("content") or ""
+    if forced and schema is not None and not text.lstrip().startswith("{"):
+        text = "{" + text          # the prefilled brace comes back with the content on some builds, not on others
     data = None
     if schema is not None:
         try:
@@ -84,12 +99,19 @@ def chat(provider, model, messages, *, schema=None, images=None, thinking=None,
     return Reply(
         text=text,
         data=data,
-        reasoning=msg.get("reasoning_content") or msg.get("reasoning"),
-        usage=j.get("usage", {}),
+        reasoning=reasoning,
+        usage=usage,
         ms=int((time.perf_counter() - t0) * 1000),
         timings=j.get("timings", {}),
         finish=j["choices"][0].get("finish_reason"),
+        forced=forced,
     )
+
+
+def _post(provider, body, headers, timeout):
+    r = httpx.post(provider["base_url"].rstrip("/") + "/chat/completions", json=body, headers=headers, timeout=timeout)
+    r.raise_for_status()
+    return r.json()
 
 
 def list_models(provider, timeout=10.0):

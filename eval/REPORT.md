@@ -31,6 +31,14 @@ tables. PREREG.md is the contract; this file says what actually happened.
    12000-token cap, no tools, no images (so no ocrbench). The prompt gets one extra line asking
    for the answer alone on the last line, since the judges read free text; on humaneval the last
    fenced block is what gets run. It is the baseline the other conditions should be read against.
+7. Forced answer, added after a quick R run on the 4070: with thinking at the template default,
+   4 of the first 8 items spent the whole 12000-token cap inside the think block and came back
+   empty. Now when a call stops on the length limit with reasoning and no content, the same
+   request goes out once more with that reasoning closed by a "time is up" line and the answer
+   prefilled, 2500 tokens, so the model answers from what it had. Every thinking call gets this,
+   framework and R alike. It went in after v2 A/D/E and after B/C had started, so v2 runs without
+   it and v3 and R run with it; the tables count how often it fired, and a v3 D medium run
+   (medium is otherwise unchanged from v2) measures its effect on its own.
 
 ## Quick timing (seed 0-2 mixed, 3 items per suite, not part of the results)
 

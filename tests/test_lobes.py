@@ -227,6 +227,29 @@ def test_raw_condition(monkeypatch):
     assert ev.run_item(cfg, "R", 4, "humaneval", he, vram)["correct"]
 
 
+def test_forced_answer(monkeypatch):
+    """thinking that eats the whole cap gets a second, prefilled call that closes the think block and answers"""
+    from lobes import providers
+    bodies = []
+    replies = [{"choices": [{"message": {"content": "", "reasoning_content": "so far 23*40=920"}, "finish_reason": "length"}],
+                "usage": {"prompt_tokens": 10, "completion_tokens": 100, "total_tokens": 110}},
+               {"choices": [{"message": {"content": '"answer": "1081"}'}, "finish_reason": "stop"}],
+                "usage": {"prompt_tokens": 120, "completion_tokens": 8, "total_tokens": 128}}]
+
+    class Resp:
+        def __init__(self, j): self.j = j
+        def raise_for_status(self): pass
+        def json(self): return self.j
+    import copy
+    monkeypatch.setattr(providers.httpx, "post",
+                        lambda url, json, headers, timeout: (bodies.append(copy.deepcopy(json)), Resp(replies[len(bodies) - 1]))[1])
+    r = providers.chat({"base_url": "http://x"}, "m", [{"role": "user", "content": "q"}], schema={"type": "object"}, thinking=True, max_tokens=100)
+    assert r.forced and r.data == {"answer": "1081"} and r.usage["total_tokens"] == 238 and r.reasoning == "so far 23*40=920"
+    last = bodies[1]["messages"][-1]
+    assert last["role"] == "assistant" and last["reasoning_content"].endswith(providers.BUDGET_MSG) and last["content"] == "{"
+    assert bodies[1]["max_tokens"] == 2500 and bodies[0]["max_tokens"] == 100
+
+
 def test_reflect_and_score(tmp_path):
     from lobes.lobe import reasoning
     st = _state("who wrote it", "Alice", "qa")
