@@ -16,6 +16,10 @@ tables. PREREG.md is the contract; this file says what actually happened.
    is dropped. H4 (equal-compute voting) is therefore untested.
 3. Item counts actually run per condition at seed 0: A 120 (no ocrbench), B/C/D/E 140; seeds 1
    and 2 add 10 multistep items each. 780 runs. F skipped, no key.
+4. 5090 run: the executive (LFM2.5-1.2B) sat on the CPU as on the 4070 for v1 A and the first
+   124 items of D s0. The pod shows 384 threads but its cgroup allows 40, so llama.cpp spent
+   4.3 s per call fighting itself, 36% of a D item. From D s0 item 125 on it runs on the GPU,
+   0.27 s per call. Seconds for v1 D are therefore mixed; tokens and accuracy are not affected.
 
 ## Quick timing (seed 0-2 mixed, 3 items per suite, not part of the results)
 
