@@ -44,8 +44,8 @@ tables. PREREG.md is the contract; this file says what actually happened.
    Fixed by splitting on newlines only; D/E resumed from where they stopped, after B/C, which
    had started in the meantime.
 9. The rest of the queue was split over two 5090 boxes to finish sooner: the first keeps v2 D/E,
-   v2 high, v3 auto and v3 medium, a second one from the same template (driver 580 instead of
-   570, same llama.cpp build, same model files and item ids) runs R and v3 high. Before the
+   v2 high and v3 auto, a second one from the same template (driver 580 instead of 570, same
+   llama.cpp build, same model files and item ids) runs R, v3 high and v3 medium. Before the
    split, R shared the first GPU with the D/E lane for nine minutes: the 22 D s0 items finished
    22:02-22:11 UTC (12 ocrbench, the 10 multistep) have inflated ms, nothing else about them
    changes; the 8 R items from that stretch were thrown away and R starts over on the second
