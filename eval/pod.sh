@@ -7,7 +7,8 @@ apt-get update -q && apt-get install -y -q cmake git build-essential
 pip install -e '.[dev,eval,ocr]'
 # 32 GB card: keep everything loaded and put the executive on the GPU too (its cgroup gives 40 cores but
 # llama.cpp sees 384 threads and took 4.3 s a call on the CPU). Working-copy only; the 4070 numbers used 6400.
-sed -i -e 's/vram_budget_mb: 6400/vram_budget_mb: 28000/' -e '/device: cpu/d' -e 's/vram_mb: 0$/vram_mb: 1500/' lobes.yaml
+sed -i -e 's/vram_budget_mb: 6400/vram_budget_mb: 28000/' -e '/device: cpu/d' -e 's/vram_mb: 0$/vram_mb: 1500/' \
+       -e 's/^  ctx: 16384$/  ctx: 16384\n  threads: 8/' lobes.yaml
 lobes install --profile all
 pytest -q
 nohup lobes serve > serve.log 2>&1 &

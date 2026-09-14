@@ -6,6 +6,7 @@ llama:
   host: 127.0.0.1
   port: 8080
   ctx: 16384
+  # threads: 8              # llama-server starts one thread per core it sees; set this on a box with a cpu quota
   vram_budget_mb: 6400       # 8188 total minus what the desktop already holds; recalibrate from `lobes models`
 
 # name -> where to get it, how much GPU memory it takes, where it runs.

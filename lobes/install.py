@@ -94,7 +94,10 @@ def install_models(cfg, root: Path, names):
 
 def write_presets(cfg, root: Path):
     """models/models.ini for `llama-server --models-preset`. Only models whose files exist go in."""
-    lines = ["version = 1", "", "[*]", f"c = {cfg['llama']['ctx']}", "jinja = true", "n-gpu-layers = 999", ""]
+    lines = ["version = 1", "", "[*]", f"c = {cfg['llama']['ctx']}", "jinja = true", "n-gpu-layers = 999"]
+    if cfg["llama"].get("threads"):
+        lines.append(f"t = {cfg['llama']['threads']}")
+    lines.append("")
     for n, m in cfg["models"].items():
         f = root / "models" / m["file"]
         if not f.exists():
