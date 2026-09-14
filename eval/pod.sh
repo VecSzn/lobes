@@ -24,9 +24,10 @@ mkdir -p eval/results/5090-v1 && mv /workspace/5090-v1/*.jsonl eval/results/5090
 git stash -q && git checkout -q v2 && git stash pop -q
 lobes eval --conditions A,D,E --tag 5090-v2 > eval-v2.log 2>&1
 lobes eval --conditions B,C --tag 5090-v2 > eval-v2-bc.log 2>&1
-lobes eval --conditions R --tag 5090-v2 > eval-r.log 2>&1      # the 9B alone; same dir so one report shows it next to A-E
 lobes eval --conditions D --seeds 0 --effort high --tag 5090-v2-high > eval-v2-high.log 2>&1
-# v3 (reflect, search, auto) leaves medium alone, so only high and auto are run.
+# main carries the forced answer (3655e67), so R and v3 run with it and v2 without.
 git stash -q && git checkout -q main && git stash pop -q
+lobes eval --conditions R --tag 5090-v2 > eval-r.log 2>&1      # the 9B alone; same dir so one report shows it next to A-E
 lobes eval --conditions D --seeds 0 --effort high --tag 5090-v3-high > eval-v3-high.log 2>&1
 lobes eval --conditions D --seeds 0 --effort auto --tag 5090-v3-auto > eval-v3-auto.log 2>&1
+lobes eval --conditions D --seeds 0 --tag 5090-v3 > eval-v3-med.log 2>&1      # medium is v2 medium plus the forced answer
