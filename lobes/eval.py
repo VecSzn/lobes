@@ -14,7 +14,7 @@ import httpx
 
 from . import config
 from .lobe.verifier import norm, nums, same
-from .runner import effort, run
+from .runner import EFFORT, run
 
 DATA = config.ROOT / "eval" / "data"
 RESULTS = config.ROOT / "eval" / "results"
@@ -175,8 +175,8 @@ def run_item(cfg, cond, seed, suite, item, vram):
     rec.update(answer=(st.answer or "")[:1000], correct=correct, abstained=abstained, task_class=st.task_class,
                tokens=st.usage, ms=st.ms(), lobe_ms=lobe_ms, swaps=st.swaps, swap_ms=swap_ms, vram_peak_mb=vram.peak,
                steps=st.steps, retries=st.retries, escalations=st.escalations, calls=len(st.calls),
-               basis=last.basis if last else None, passed=bool(last and last.verdict == "PASS"),
-               stuck=st.steps >= effort(c)["steps"] and not (last and last.verdict == "PASS"))
+               basis=last.basis if last else None, passed=bool(last and last.verdict == "PASS"), level=st.effort,
+               stuck=st.steps >= EFFORT[st.effort]["steps"] and not (last and last.verdict == "PASS"))
     if suite in ("gsm8k", "tools"):             # lenient twin of the strict judge, reported next to it
         rec["gold_in_answer"] = item.get("gold", item.get("answer")).replace(",", "") in nums(st.answer or "")
     return rec

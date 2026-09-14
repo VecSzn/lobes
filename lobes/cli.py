@@ -90,7 +90,7 @@ def ask(prompt: str,
         schema: bool = typer.Option(False, help="constrain the reply to the Envelope schema"),
         think: bool = typer.Option(None, "--think/--no-think"),
         image: list[Path] = typer.Option(None),
-        effort: str = typer.Option(None, help="low, medium, high, xhigh or max; default is effort in lobes.yaml"),
+        effort: str = typer.Option(None, help="low, medium, high, xhigh, max or auto; default is effort in lobes.yaml"),
         max_tokens: int = 2048):
     cfg = config.load()
     if effort:
@@ -125,7 +125,7 @@ def ask(prompt: str,
 def eval_(conditions: str = "A,B,B3,C,D,E,F", seeds: str = "0,1,2", suites: str = None,
           quick: bool = typer.Option(False, help="3 items per suite, for timing"),
           tag: str = typer.Option("", help="subdirectory of eval/results, one per code version or machine"),
-          effort: str = typer.Option(None, help="reasoning effort for every condition; default is effort in lobes.yaml"),
+          effort: str = typer.Option(None, help="low, medium, high, xhigh, max or auto, for every condition; default is effort in lobes.yaml"),
           report: bool = typer.Option(False, help="print the tables from eval/results instead of running")):
     from . import eval as eval_
     if report:
