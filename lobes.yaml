@@ -21,18 +21,18 @@ models:
     file: Qwen3.5-2B-Q4_K_M.gguf
     mmproj: mmproj-F16.gguf
     vram_mb: 2400
-    thinking: qwen
+    thinking: true
   qwen3.5-4b:
     repo: unsloth/Qwen3.5-4B-GGUF
     file: Qwen3.5-4B-Q4_K_M.gguf
     vram_mb: 3600
-    thinking: qwen
+    thinking: true
   qwen3.5-4b-vl:
     repo: unsloth/Qwen3.5-4B-GGUF
     file: Qwen3.5-4B-Q4_K_M.gguf
     mmproj: mmproj-F16.gguf
     vram_mb: 4600
-    thinking: qwen
+    thinking: true
   granite-h-micro:
     repo: ibm-granite/granite-4.0-h-micro-GGUF
     file: granite-4.0-h-micro-Q4_K_M.gguf
@@ -45,12 +45,12 @@ models:
     repo: lmstudio-community/NVIDIA-Nemotron-3-Nano-4B-GGUF
     file: NVIDIA-Nemotron-3-Nano-4B-Q4_K_M.gguf
     vram_mb: 3500
-    thinking: nemotron
+    thinking: true
   qwen3.5-9b:
     repo: unsloth/Qwen3.5-9B-GGUF
     file: Qwen3.5-9B-IQ4_XS.gguf
     vram_mb: 6100
-    thinking: qwen
+    thinking: true
 
 providers:
   local:    { type: openai, base_url: http://127.0.0.1:8080/v1 }

@@ -28,7 +28,7 @@ def _image_part(path):
     return {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}}
 
 
-def chat(provider, model, messages, *, schema=None, images=None, thinking=None, think_style=None,
+def chat(provider, model, messages, *, schema=None, images=None, thinking=None,
          temperature=0.2, max_tokens=2048, timeout=600.0):
     messages = [dict(m) for m in messages]
     if images:
@@ -38,11 +38,9 @@ def chat(provider, model, messages, *, schema=None, images=None, thinking=None, 
     body = {"model": model, "messages": messages, "temperature": temperature, "max_tokens": max_tokens}
     if schema is not None:
         body["response_format"] = {"type": "json_schema", "json_schema": {"name": "out", "schema": schema}}
-    if thinking is not None and think_style == "qwen":
+    if thinking is not None:
+        # Qwen3.5 and Nemotron 3 both read enable_thinking from the chat template; llama-server passes it through
         body["chat_template_kwargs"] = {"enable_thinking": bool(thinking)}
-    elif thinking is not None and think_style == "nemotron":
-        # TODO check against the Nemotron 3 card; Nano 2 used a system-prompt switch
-        messages.insert(0, {"role": "system", "content": "/think" if thinking else "/no_think"})
 
     headers = {}
     if provider.get("api_key"):

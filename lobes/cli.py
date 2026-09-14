@@ -105,7 +105,7 @@ def ask(prompt: str,
         ModelManager(cfg).ensure(model)
     r = providers.chat(cfg["providers"][prov], model, [{"role": "user", "content": prompt}],
                        schema=json_schema(Envelope) if schema else None, images=image,
-                       thinking=think, think_style=cfg["models"].get(model, {}).get("thinking"),
+                       thinking=think if cfg["models"].get(model, {}).get("thinking") else None,
                        max_tokens=max_tokens)
     if r.reasoning:
         rprint(f"[dim]{r.reasoning}[/dim]")
