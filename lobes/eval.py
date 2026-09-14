@@ -191,6 +191,7 @@ def plan(cond, seed, quick, suites=None):
 
 
 def main(cfg, conditions, seeds, quick=False, suites=None):
+    sys.stdout.reconfigure(errors="replace")  # windows console is gbk; an umlaut in an answer killed a run
     fetch()
     RESULTS.mkdir(parents=True, exist_ok=True)
     vram = Vram()
