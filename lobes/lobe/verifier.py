@@ -56,12 +56,21 @@ def evidence(state):
         if missing:
             failed.append(c.id)
             notes.append(f"{c.id}: {missing} not in {c.evidence}")
-    if state.task_class == "math" and blobs and nums(state.candidate.answer or ""):
+    outputs = [b for b in blobs.values() if b.strip()]     # a tool that printed nothing is not evidence against
+    if state.task_class == "math" and outputs and nums(state.candidate.answer or ""):
         n = nums(state.candidate.answer)[-1]
-        if not any(n in b.replace(",", "") for b in blobs.values()):
+        if not any(n in b.replace(",", "") for b in outputs):
             failed.append("answer")
             notes.append(f"final number {n} does not appear in any tool output")
     return failed, "; ".join(notes)
+
+
+def _compiles(src):
+    try:
+        compile(src, "<candidate>", "exec")
+        return True
+    except SyntaxError:
+        return False       # a prose answer on a task misfiled as code goes to the blind re-solve instead
 
 
 def verify(ctx, state):
@@ -73,7 +82,7 @@ def verify(ctx, state):
         return Verdict(verdict="PASS", basis="evidence" if state.tool_results else "none",
                        notes="no verifier model" if not state.tool_results else "tool-backed, no verifier model")
 
-    if state.task_class == "code":
+    if state.task_class == "code" and _compiles(cand.answer or ""):
         schema = {"type": "object", "additionalProperties": False, "required": ["test"], "properties": {"test": {"type": "string"}}}
         r = ctx.chat(state, "verifier", [{"role": "system", "content": TEST_SYS},
                                          {"role": "user", "content": brief(state, with_candidate=True)}],

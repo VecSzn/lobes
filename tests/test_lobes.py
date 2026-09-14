@@ -127,6 +127,14 @@ def test_state_machine(tmp_path, monkeypatch):
     assert kinds[:4] == ["start", "intake", "plan", "tool"] and kinds[-1] == "final" and kinds.count("verdict") == 2
 
 
+def test_language_guard():
+    from lobes.lobe.language import faithful
+    assert faithful("17 x 23 = 391", "391", "what is 17 * 23")
+    assert not faithful("97404784", "97405784", "what is 123456 * 789 minus 1000")
+    assert faithful("The capital of Australia is Canberra.", "Canberra", "capital of australia?")
+    assert not faithful("The capital is Sydney.", "Canberra", "capital of australia?")
+
+
 def test_fast_route(tmp_path, monkeypatch):
     cfg = config.load()
     cfg["_root"] = tmp_path

@@ -10,7 +10,8 @@ CODE = re.compile(r"\b(function|def |class |implement|write .{0,20}(python|code|
                   r"|refactor)\b|函数|代码|实现|脚本", re.I)
 MATH = re.compile(r"\d[\d,]*\s*[-+*/×÷^%]\s*\d|\b(sum|product|calculate|compute|how many|how much|solve|prime"
                   r"|factor|percent|average|total)\b|计算|多少|求", re.I)
-TOOLY = re.compile(r"\b(run|execute|read|open|check|test|verify|benchmark)\b|运行|执行|读取|文件|测试", re.I)
+TOOLY = re.compile(r"\b(run|execute|read|open|check|test|verify|benchmark|screenshot|screen|fetch|download|https?)\b"
+                   r"|运行|执行|读取|文件|测试|截图|屏幕|网页", re.I)
 
 CLASS_SCHEMA = {"type": "object", "additionalProperties": False, "required": ["kind", "needs_tool"],
                 "properties": {"kind": {"enum": ["chat", "math", "code", "qa"]}, "needs_tool": {"type": "boolean"}}}
@@ -42,6 +43,8 @@ def intake(ctx, state):
                      schema=CLASS_SCHEMA, thinking=False, max_tokens=40)
         if r.data:
             state.task_class, state.needs_tool = r.data["kind"], r.data["needs_tool"]
+            if state.task_class == "code" and TOOLY.search(g):
+                state.task_class = "qa"     # lfm calls "fetch x"/"take a screenshot" code; that path runs the answer as python
             if state.task_class == "chat":
                 state.route = "fast"
                 return

@@ -3,9 +3,10 @@ from .. import tools
 from ..schema import Envelope, Next, ToolCall
 from . import brief
 
-SYS = """You are the motor lobe. Pick ONE tool call that moves the goal forward.
-python: a short script that prints the values needed, as plain numbers or strings, nothing decorative. Its output
-becomes evidence, so print exactly what will be quoted. Do not repeat a call whose output is already listed."""
+SYS = """You are the motor lobe. Pick ONE tool call that moves the goal forward. Tools:
+""" + tools.describe() + """
+Tool output becomes evidence, so print() exactly what will be quoted, plain values, nothing decorative. Prefer
+python for anything computable. Do not repeat a call whose output is already listed."""
 
 
 def act(ctx, state):

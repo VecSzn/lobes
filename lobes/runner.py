@@ -13,7 +13,8 @@ from . import config, providers, tools
 from .models import ModelManager
 from .schema import Envelope, Observation
 
-MAX_STEPS, MAX_RETRIES, MAX_ESCALATIONS = 8, 2, 1
+MAX_STEPS, MAX_RETRIES = 10, 2
+LADDER = ("escalate", "remote")      # who takes over reasoning once retries are used up, in this order
 
 
 class Trace:
@@ -46,6 +47,7 @@ class TaskState:
     overrides: dict = field(default_factory=dict)      # lobe -> other lobe slot (escalation)
     swaps: int = 0
     calls: list = field(default_factory=list)          # (lobe, model, ms, tokens)
+    usage: dict = field(default_factory=dict)          # prompt/completion/total tokens summed over calls
     answer: str | None = None
     t0: float = field(default_factory=time.perf_counter)
 
@@ -69,7 +71,13 @@ class Ctx:
         return config.lobe(self.cfg, lobe, self.profile)
 
     def is_model(self, lobe):
-        return self.slot(lobe)[0] != "impl"
+        """True when the profile fills this slot with a model we can actually call (remote ones need a key)."""
+        try:
+            prov, _ = self.slot(lobe)
+        except KeyError:
+            return False
+        p = self.cfg["providers"].get(prov, {})
+        return prov != "impl" and (not p.get("base_url", "").startswith("https://") or bool(p.get("api_key")))
 
     def chat(self, state, lobe, messages, *, schema=None, thinking=None, temperature=0.2, max_tokens=2048, images=None):
         prov, model = self.slot(state.overrides.get(lobe, lobe))
@@ -82,8 +90,10 @@ class Ctx:
         mcfg = self.cfg["models"].get(model, {})
         r = providers.chat(self.cfg["providers"][prov], model, messages, schema=schema, images=images,
                            thinking=thinking if mcfg.get("thinking") else None,
-                           temperature=temperature, max_tokens=max_tokens)
+                           temperature=temperature, max_tokens=max_tokens, seed=self.cfg.get("seed"))
         toks = r.usage.get("total_tokens", 0)
+        for k in ("prompt_tokens", "completion_tokens", "total_tokens"):
+            state.usage[k] = state.usage.get(k, 0) + r.usage.get(k, 0)
         state.calls.append((lobe, f"{prov}/{model}", r.ms, toks))
         self.trace.write("call", lobe=lobe, model=f"{prov}/{model}", ms=r.ms, tokens=toks, thinking=thinking,
                          temperature=temperature, parsed=r.data is not None if schema else None,
@@ -102,6 +112,9 @@ def run_tools(ctx, state, calls):
         state.tool_results[ref] = res
         state.observations.append(Observation(source=f"tool:{c.name}", ref=ref, summary=summary))
         ctx.trace.write("tool", ref=ref, call=c.model_dump(), exit=res.get("exit"), summary=summary[:500])
+        if res.get("image") and ctx.is_model("perception"):
+            from .lobe import perception
+            perception.look(ctx, state, images=[res["image"]])
 
 
 def run(cfg, goal, *, profile=None, images=None, task_id=None):
@@ -120,11 +133,12 @@ def run(cfg, goal, *, profile=None, images=None, task_id=None):
         state.candidate = executive.fast(ctx, state)
         return _finish(ctx, state, language)
 
-    if state.images:
+    if state.images and ctx.is_model("perception"):
         perception.look(ctx, state)
     state.plan = executive.plan(ctx, state)
     trace.write("plan", plan=state.plan.model_dump())
     next_lobe = "motor" if state.plan.next.action == "tool" else "reasoning"
+    rungs = [] if cfg.get("no_escalate") else [s for s in LADDER if ctx.is_model(s)]   # eval turns the ladder off
 
     while state.steps < MAX_STEPS:
         state.steps += 1
@@ -149,11 +163,11 @@ def run(cfg, goal, *, profile=None, images=None, task_id=None):
         if state.retries < MAX_RETRIES:
             state.retries += 1          # reasoning.solve changes thinking/temperature with this
             continue
-        if state.escalations < MAX_ESCALATIONS and ctx.is_model("escalate"):
+        if state.escalations < len(rungs):
+            state.overrides["reasoning"] = rungs[state.escalations]
             state.escalations += 1
             state.retries = 0
-            state.overrides["reasoning"] = "escalate"
-            trace.write("escalate", to=ctx.slot("escalate"))
+            trace.write("escalate", to=ctx.slot(state.overrides["reasoning"]))
             continue
         break                           # out of moves, answer with what we have and say so
     return _finish(ctx, state, language)

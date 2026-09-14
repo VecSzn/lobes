@@ -9,11 +9,11 @@ SCHEMA = {"type": "object", "additionalProperties": False, "required": ["descrip
                          "details": {"type": "array", "items": {"type": "string"}}}}
 
 
-def look(ctx, state):
+def look(ctx, state, images=None):
     prompt = ("Describe this image for someone who cannot see it, copy out all readable text exactly, and list "
               f"details that matter for this task: {state.goal}")
-    r = ctx.chat(state, "perception", [{"role": "user", "content": prompt}], schema=SCHEMA, images=state.images,
-                 thinking=False, max_tokens=1000)
+    r = ctx.chat(state, "perception", [{"role": "user", "content": prompt}], schema=SCHEMA,
+                 images=images or state.images, thinking=False, max_tokens=1000)
     d = r.data or {"description": r.text, "text": "", "details": []}
     ref = f"perception_{sum(o.source == 'lobe:perception' for o in state.observations)}"
     (ctx.rundir / f"{ref}.json").write_text(json.dumps(d, ensure_ascii=False, indent=1), encoding="utf-8")

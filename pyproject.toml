@@ -12,10 +12,14 @@ dependencies = [
     "rich>=13",
     "pyyaml>=6",
     "python-dotenv>=1",
+    "starlette>=0.40",
+    "uvicorn>=0.30",
+    "pillow>=10",
 ]
 
 [project.optional-dependencies]
 dev = ["pytest>=8"]
+eval = ["pandas>=2", "pyarrow>=15"]
 
 [project.scripts]
 lobes = "lobes.cli:app"

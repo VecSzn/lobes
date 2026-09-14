@@ -30,14 +30,20 @@ def _image_part(path):
 
 
 def chat(provider, model, messages, *, schema=None, images=None, thinking=None,
-         temperature=0.2, max_tokens=2048, timeout=600.0):
+         temperature=0.2, max_tokens=2048, seed=None, timeout=600.0):
     messages = [dict(m) for m in messages]
     if images:
         last = messages[-1]
         last["content"] = [{"type": "text", "text": last["content"]}] + [_image_part(p) for p in images]
 
     body = {"model": model, "messages": messages, "temperature": temperature, "max_tokens": max_tokens}
-    if schema is not None:
+    if seed is not None:
+        body["seed"] = seed
+    if schema is not None and provider.get("json") == "object":
+        # providers without json_schema support (deepseek): json mode plus the schema pasted into the prompt
+        body["response_format"] = {"type": "json_object"}
+        messages.insert(0, {"role": "system", "content": "Reply with JSON matching this schema:\n" + json.dumps(schema)})
+    elif schema is not None:
         body["response_format"] = {"type": "json_schema", "json_schema": {"name": "out", "schema": schema}}
     if thinking is not None:
         # Qwen3.5 and Nemotron 3 both read enable_thinking from the chat template; llama-server passes it through

@@ -118,6 +118,26 @@ def ask(prompt: str,
     rprint(f"[dim]{r.ms} ms, usage={r.usage}[/dim]")
 
 
+@app.command("eval")
+def eval_(conditions: str = "A,B,B3,C,D,E,F", seeds: str = "0,1,2", suites: str = None,
+          quick: bool = typer.Option(False, help="3 items per suite, for timing"),
+          report: bool = typer.Option(False, help="print the tables from eval/results instead of running")):
+    from . import eval as eval_
+    if report:
+        print(eval_.report(quick))
+        return
+    eval_.main(config.load(), conditions.split(","), [int(x) for x in seeds.split(",")], quick,
+               suites.split(",") if suites else None)
+
+
+@app.command()
+def api(host: str = "127.0.0.1", port: int = 8090, profile: str = None):
+    """OpenAI-compatible /v1/chat/completions in front of the runner; model "lobes/<profile>" picks the profile."""
+    from . import api as api_
+    rprint(f"lobes api on http://{host}:{port}/v1  (llama-server must be running)")
+    api_.serve(config.load(), host, port, profile)
+
+
 @prov_app.command("test")
 def providers_test():
     cfg = config.load()
