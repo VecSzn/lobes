@@ -90,7 +90,9 @@ def backed_by(state, text):
     if not t:
         return None
     for ref, r in state.tool_results.items():
-        if r.get("exit") == 0 and t in norm(r.get("stdout") or ""):
+        out = norm(r.get("stdout") or "") if r.get("exit") == 0 else ""
+        # a one-word answer has to be a whole word out there: "12" is not backed by "2012"
+        if out and (t in out.split() if " " not in t else t in out):
             return ref
     return None
 
@@ -245,6 +247,9 @@ if __name__ == "__main__":
     assert defined("import os\ndef f(): pass\nclass C: pass") == ["f", "C"]
     goal = 'def f(x):\n    """Doubles.\n    >>> f(2)\n    4\n    >>> f(3)\n    6\n    """\n'
     assert [e.want for e in examples(goal)] == ["4\n", "6\n"]
+    class _S:
+        tool_results = {"tool_0": {"stdout": "year 2012\nclosing down", "exit": 0}, "tool_1": {"stdout": "12", "exit": 1}}
+    assert backed_by(_S, "12") is None and backed_by(_S, "2012") == "tool_0" and backed_by(_S, "Closing down.") == "tool_0"
     assert _blame('File "<string>", line 2, in <module>\nNameError', 5) == "candidate"
     assert _blame('File "<string>", line 9, in <module>\nNameError', 5) == "test"
 

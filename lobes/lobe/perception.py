@@ -55,5 +55,5 @@ def ask(ctx, state):
     r = ctx.chat(state, "perception", [{"role": "user", "content": f"Look at the image and answer with only the answer, nothing else: {state.goal}"}],
                  schema=ANSWER, images=state.images, thinking=False, max_tokens=300)
     answer = (r.data or {}).get("answer", r.text).strip()
-    state.observations.append(Observation(source="lobe:perception", ref=None, summary=f"Second look, answering the question directly: {answer}"))
+    state.observations.append(Observation(source="lobe:perception", ref="second_look", summary=f"Second look, answering the question directly: {answer}"))
     return answer
