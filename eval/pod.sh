@@ -23,6 +23,7 @@ mkdir -p eval/results/5090-v1 && mv /workspace/5090-v1/*.jsonl eval/results/5090
 # v2 is the branch of that name: the v2 commit plus the seed fix (6c2a145) cherry-picked, nothing from v3.
 git stash -q && git checkout -q v2 && git stash pop -q
 lobes eval --conditions A,D,E --tag 5090-v2 > eval-v2.log 2>&1
+lobes eval --conditions B,C --tag 5090-v2 > eval-v2-bc.log 2>&1
 lobes eval --conditions D --seeds 0 --effort high --tag 5090-v2-high > eval-v2-high.log 2>&1
 # v3 (reflect, search, auto) leaves medium alone, so only high and auto are run.
 git stash -q && git checkout -q main && git stash pop -q
