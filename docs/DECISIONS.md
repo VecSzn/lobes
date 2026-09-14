@@ -2,6 +2,10 @@
 
 一行一条，倒序。写这个是因为过两周我自己都会忘了当时为什么这么选。
 
+- 2026-09-14 02:50 quick 计时：A（9B）平均 64 s/题，SimpleQA 上 160 s（盲解不一致后开思考，6000 token 用完还没答）；B（4B）24 s/题。按全量算 10 小时，超过一夜，按 PREREG 里写死的顺序砍：种子 1、2 只跑 multistep，GSM8K 和 SimpleQA 各 30 题，B3 不跑。预计 8 小时。改的是 eval.py 里的 N，判分和阈值没动。
+- 2026-09-14 评测判分全是代码：GSM8K 取答案里最后一个数，HumanEval 跑官方 check()，SimpleQA 是标准答案字符串包含（官方用 LLM 判，我这个是下界），所以 SimpleQA 主要看“答了且错”的比例而不是准确率。等算力对照 B3 = 单 4B 从第一步就 3 采样投票，靠 cfg 的 vote 开关，不另写代码路径。
+- 2026-09-14 单模型对照 A/B 直接当作 profile 写进 lobes.yaml（single-9b、single-4b），槽位填 none 表示没有。这样对照组和 specialists 走的是同一套 runner、语法约束、重试预算，代码里没有第二条路。
+- 2026-09-14 verifier 盲解答“无法确定/could not be determined”时算弃权（PASS，basis 按有无工具证据），不再算 CONFLICT。gemma 对 fetch 任务连答 6 次同一句“无法确定”，把一个本来对的 Example Domain 送去了 9B 又送回来（193 s）。另外它提议的 python 检查如果只是 print 它自己的答案，当没提议。
 - 2026-09-14 the 1.2B executive filed "take a screenshot" and "fetch <url>" as code, and the code path runs the answer as python, so both looped to the 9B and back (150 s, 227 s). Rule now: a tool verb in the goal downgrades the model's "code" to qa, and the code path only runs answers that compile.
 - 2026-09-14 language 的改写要过代码检查：数字集合（去掉 goal 里出现的）必须和草稿一致，草稿 6 个词以内还得原样出现在改写里，否则丢掉改写用草稿。起因是 gemma 把验证过的 97405784 改写成了 97404784，等于最后一步把前面全白干了。
 - 2026-09-14 python 工具在 stdout 为空、代码里没有 print、退出码 0 时，把最后一行当表达式重跑一次打印出来。granite 和 gemma 都爱写 `17 * 23` 然后等结果，空输出会让证据检查卡死在 RETRY。

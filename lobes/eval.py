@@ -19,8 +19,10 @@ from .runner import MAX_STEPS, run
 DATA = config.ROOT / "eval" / "data"
 RESULTS = config.ROOT / "eval" / "results"
 SHUFFLE_SEED = 20260914
-N = {"gsm8k": 50, "humaneval": 30, "tools": 20, "simpleqa": 50, "ocrbench": 20, "multistep": 10}
-SMALL = 10                    # seeds 1 and 2: first SMALL items of every suite except multistep
+# PREREG numbers were gsm8k 50, simpleqa 50, SMALL 10. The quick timing (A 64 s/item, B 24 s/item) projected
+# ~10 h, so the pre-registered cut rule applied: seeds 1-2 multistep only, gsm8k/simpleqa 30, B3 dropped.
+N = {"gsm8k": 30, "humaneval": 30, "tools": 20, "simpleqa": 30, "ocrbench": 20, "multistep": 10}
+SMALL = 0                     # seeds 1 and 2: first SMALL items of every suite except multistep
 CONDITIONS = {                # cfg overrides on top of the profile; see PREREG for what each one is
     "A":  dict(profile="single-9b", no_escalate=True),
     "B":  dict(profile="single-4b", no_escalate=True),

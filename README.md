@@ -1,47 +1,76 @@
 # Lobes
 
-An experimental modular AI runtime that coordinates specialized small-model lobes with evidence-based verification and dynamic model swapping, built to fit in 8 GB of VRAM.
+Six small models, one job each, swapped in and out of an 8 GB GPU. A runner
+decides who goes next and a verifier that never sees the candidate answer decides
+whether it is done.
 
-The idea: instead of one general model, split the job across a handful of small
-models from different families, each doing one thing (planning, seeing, reasoning,
-calling tools, writing, checking), and swap them in and out of the GPU as needed.
-Whether that actually buys anything over a single 9B model at the same budget is
-the question this repo exists to measure. Design notes are in
-[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) (Chinese).
+The question this repo exists to answer: does splitting the work across small
+models from different families buy anything over one 9B model with the same
+scaffolding? My bet, written down before running anything
+([eval/PREREG.md](eval/PREREG.md)): not accuracy. Maybe reliability and cost.
+The numbers are in [eval/REPORT.md](eval/REPORT.md) and summarized below.
 
-Status: early. The runtime, model manager and installer work on my machine
-(RTX 4070 Laptop, 8 GB). Numbers in the docs are measured where they say so and
-guesses where they don't. See [docs/DECISIONS.md](docs/DECISIONS.md) for what
-changed along the way and why.
+Design notes are in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) (Chinese),
+what changed and why in [docs/DECISIONS.md](docs/DECISIONS.md).
+
+## What is in it
+
+    executive    picks the route (rules first, a 1.2B model for the rest), writes the plan
+    perception   describes images and screenshots
+    reasoning    produces claims + answer, or asks for one python run first
+    motor        turns a plan step into one tool call
+    verifier     evidence check in code, then a blind re-solve or a generated test
+    language     final wording; a code check stops it from changing numbers
+
+Which model fills which lobe is only in `lobes.yaml`. A lobe can point at a local
+GGUF (llama-server in router mode), an OpenAI-compatible remote, or plain code.
+Profiles: `specialists` (one family per lobe), `shared` (one 4B for everything),
+plus the single-model controls used by the eval.
+
+When the verifier says no, reasoning retries with thinking on, then votes over three
+samples, then hands the task to the 9B, then to a remote API if a key is set.
+
+Tools: python, shell (timeout, blacklist), read/write/edit file, web fetch,
+screenshot. Every tool output is a file in `runs/<task>/` and every claim that says
+"tool" has to quote a number that is actually in that file.
 
 ## Quick start
 
-Windows, NVIDIA GPU, Python 3.11+. Everything else gets downloaded.
+Windows, NVIDIA GPU, Python 3.11+.
 
     pip install -e .
-    copy .env.example .env          # only needed for remote providers
-    lobes install                   # llama.cpp + ~18 GB of GGUFs for the default profile
-    lobes serve                     # llama-server in router mode, keep this running
+    lobes install                   # llama.cpp + the GGUFs for the default profile
+    lobes serve                     # keep this running
     lobes ask "what is 17 * 23"
+    lobes ask --image shot.png "what is on this screen"
+    lobes api                       # OpenAI-compatible /v1/chat/completions on :8090
 
-`lobes models` shows what is loaded and how much VRAM it takes. `lobes ask --lobe reasoning --schema`
-talks to one lobe directly and prints the raw envelope.
+    curl http://127.0.0.1:8090/v1/chat/completions -d '{"model":"lobes/specialists","messages":[{"role":"user","content":"what is 19 * 21"}]}'
 
-Which model fills which lobe is decided entirely by `lobes.yaml`. A lobe can point at a
-local model, an OpenAI-compatible remote (`openai/gpt-...`, `deepseek/...`, LM Studio on
-port 1234), or a plain code implementation. Two profiles ship: `specialists` (one family
-per lobe, swapping is the normal case) and `shared` (one 4B model wearing different hats,
-used as the control condition).
+`lobes models` shows what is loaded and what it costs. `lobes ask --lobe reasoning --schema`
+talks to one lobe directly. `pip install -e .[dev,eval]` adds pytest and the parquet
+readers for `lobes eval`.
+
+## Results
+
+Filled in after the run. See [eval/REPORT.md](eval/REPORT.md).
+
+## Status
+
+Works on my machine (RTX 4070 Laptop, 8 GB). Verified: the eight models load and
+answer under grammar constraints, the swap chain stays inside the budget, the
+retry/vote/escalate ladder fires, the api round-trips, screenshots reach the
+perception lobe. Built but not verified: the remote rung and remote provider (no key).
+Not done: multi-turn memory, anything concurrent.
 
 ## Layout
 
     lobes.yaml        models, providers, profiles
-    lobes/            runtime
+    lobes/            runtime, one file per concern, lobes in lobes/lobe/
+    eval/             prereg, suites, results, report
     docs/             design notes, decisions
-    eval/             benchmark harness and preregistration
+    tests/            pytest, no GPU needed
     models/ bin/      downloaded, gitignored
     runs/             one directory per task with the full trace
-
-## License
 
 MIT.
