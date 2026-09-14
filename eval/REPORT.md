@@ -20,6 +20,12 @@ tables. PREREG.md is the contract; this file says what actually happened.
    124 items of D s0. The pod shows 384 threads but its cgroup allows 40, so llama.cpp spent
    4.3 s per call fighting itself, 36% of a D item. From D s0 item 125 on it runs on the GPU,
    0.27 s per call. Seconds for v1 D are therefore mixed; tokens and accuracy are not affected.
+5. Found while reading the 5090 E traces: the eval passes one fixed seed to every model call, and
+   llama.cpp then returns the same text for every sample at the same temperature. Every vote in
+   v1 was three identical samples (131 of 131 votes on the 4070, 108 of 110 on the 5090), so
+   "three samples and a vote" was one sample. The v1 numbers stand as run. The fix (seed +
+   call index, commit 6c2a145) went into both v2 and v3 before their 5090 runs; the 44 v2
+   items already run without it were discarded and rerun.
 
 ## Quick timing (seed 0-2 mixed, 3 items per suite, not part of the results)
 
