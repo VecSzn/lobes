@@ -197,7 +197,7 @@ key 只放 .env，不进 git。`lobes providers test` 挨个打一下看通不�
 
 日志就是 trace.jsonl 加 rich 打到终端，每次 LLM 调用记 model、tokens、延迟、显存快照。上下文超长的工具输出交给 0.8B 摘要。V0 没有长期记忆。
 
-栈：Python 3.12，httpx、pydantic v2、typer、rich、pyyaml、python-dotenv。V1 加 fastapi 和 uvicorn，评测加 datasets。不用 LangChain 和 LangGraph，它们把控制流藏起来，而控制流正是我要测的东西。llama.cpp 用 b10951 的 win-cuda-13.3 包（150M，cudart 另 391M，610 驱动支持 13.x）。
+栈：Python 3.12，httpx、pydantic v2、typer、rich、pyyaml、python-dotenv。V1 加 starlette 和 uvicorn（原打算 fastapi，两个端点用不上），评测加 pandas 和 pyarrow 读 parquet（原打算 datasets，太重）。不用 LangChain 和 LangGraph，它们把控制流藏起来，而控制流正是我要测的东西。llama.cpp 用 b10951 的 win-cuda-13.3 包（150M，cudart 另 391M，610 驱动支持 13.x）。
 
 ```
 Lobes/
