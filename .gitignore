@@ -1,0 +1,17 @@
+.env
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+.pytest_cache/
+
+# downloaded by `lobes install`, never committed
+bin/
+models/
+*.gguf
+
+# per-task traces
+runs/
+
+# the goal prompt driving the build, not part of the project
+.goal.md
