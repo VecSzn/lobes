@@ -88,7 +88,7 @@ def reflect(ctx, state):
                  max_tokens=_budget(ctx) if thinking else 2500)
     flaw, new = (r.data or {}).get("flaw"), (r.data or {}).get("answer") or ""
     changed = bool(flaw and new.strip() and not same(cand.answer, new))
-    ctx.trace.write("reflect", flaw=flaw, changed=changed, answer=new[:500])
+    ctx.trace.write("reflect", flaw=flaw, changed=changed, before=cand.answer[:4000], answer=new[:4000])
     if changed:
         cand.answer = new
         cand.confidence = Confidence(score=0.5, basis="self")
