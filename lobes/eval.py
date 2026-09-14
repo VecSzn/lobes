@@ -19,8 +19,10 @@ from .runner import MAX_STEPS, run
 DATA = config.ROOT / "eval" / "data"
 RESULTS = config.ROOT / "eval" / "results"
 SHUFFLE_SEED = 20260914
-N = {"gsm8k": 50, "humaneval": 30, "tools": 20, "simpleqa": 50, "ocrbench": 20, "multistep": 10}
-SMALL = 10                    # seeds 1 and 2: first SMALL items of every suite except multistep
+# PREREG numbers were gsm8k 50, simpleqa 50, SMALL 10. The quick timing (A 64 s/item, B 24 s/item) projected
+# ~10 h, so the pre-registered cut rule applied: seeds 1-2 multistep only, gsm8k/simpleqa 30, B3 dropped.
+N = {"gsm8k": 30, "humaneval": 30, "tools": 20, "simpleqa": 30, "ocrbench": 20, "multistep": 10}
+SMALL = 0                     # seeds 1 and 2: first SMALL items of every suite except multistep
 CONDITIONS = {                # cfg overrides on top of the profile; see PREREG for what each one is
     "A":  dict(profile="single-9b", no_escalate=True),
     "B":  dict(profile="single-4b", no_escalate=True),
@@ -189,6 +191,7 @@ def plan(cond, seed, quick, suites=None):
 
 
 def main(cfg, conditions, seeds, quick=False, suites=None):
+    sys.stdout.reconfigure(errors="replace")  # windows console is gbk; an umlaut in an answer killed a run
     fetch()
     RESULTS.mkdir(parents=True, exist_ok=True)
     vram = Vram()
@@ -245,10 +248,12 @@ def report(quick=False):
     table("stuck loop %", lambda rs: 100 * sum(r["stuck"] for r in rs) / len(rs))
     table("VRAM peak MB (max over items, includes the desktop)", lambda rs: max(r["vram_peak_mb"] for r in rs))
     table("simpleqa: abstained %", lambda rs: 100 * sum(r["abstained"] for r in rs) / len(rs), ["simpleqa"])
-    table("simpleqa: unsupported % (answered and wrong)",
-          lambda rs: 100 * sum((not r["abstained"]) and (not r["correct"]) for r in rs) / len(rs), ["simpleqa"])
-    table("lenient: gold number anywhere in the answer %",
-          lambda rs: 100 * sum(r.get("gold_in_answer", False) for r in rs) / len(rs), ["gsm8k", "tools"])
+    table("simpleqa: empty answer %", lambda rs: 100 * sum(not r["answer"].strip() for r in rs) / len(rs), ["simpleqa"])
+    table("simpleqa: unsupported % (answered, not abstained, wrong)",
+          lambda rs: 100 * sum(bool(r["answer"].strip()) and not r["abstained"] and not r["correct"] for r in rs) / len(rs),
+          ["simpleqa"])
+    table("lenient: gold number anywhere in the answer %",  # or-ed with strict: "42.0" vs gold "42" misses the string test
+          lambda rs: 100 * sum(r["correct"] or r.get("gold_in_answer", False) for r in rs) / len(rs), ["gsm8k", "tools"])
     out.append("\n### multistep across seeds: accuracy % per seed, mean, std\n\n| cond | s0 | s1 | s2 | mean | std |\n|---|---|---|---|---|---|")
     for c in conds:
         per = []
