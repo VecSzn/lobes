@@ -121,13 +121,14 @@ def ask(prompt: str,
 @app.command("eval")
 def eval_(conditions: str = "A,B,B3,C,D,E,F", seeds: str = "0,1,2", suites: str = None,
           quick: bool = typer.Option(False, help="3 items per suite, for timing"),
+          tag: str = typer.Option("", help="subdirectory of eval/results, one per code version or machine"),
           report: bool = typer.Option(False, help="print the tables from eval/results instead of running")):
     from . import eval as eval_
     if report:
-        print(eval_.report(quick))
+        print(eval_.report(quick, tag))
         return
     eval_.main(config.load(), conditions.split(","), [int(x) for x in seeds.split(",")], quick,
-               suites.split(",") if suites else None)
+               suites.split(",") if suites else None, tag)
 
 
 @app.command()

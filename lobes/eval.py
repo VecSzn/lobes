@@ -190,10 +190,11 @@ def plan(cond, seed, quick, suites=None):
         yield suite, load_suite(suite)[:n]
 
 
-def main(cfg, conditions, seeds, quick=False, suites=None):
+def main(cfg, conditions, seeds, quick=False, suites=None, tag=""):
     sys.stdout.reconfigure(errors="replace")  # windows console is gbk; an umlaut in an answer killed a run
     fetch()
-    RESULTS.mkdir(parents=True, exist_ok=True)
+    results = RESULTS / tag                   # a tag keeps one code version's run apart from another's
+    results.mkdir(parents=True, exist_ok=True)
     vram = Vram()
     vram.start()
     for cond in conditions:
@@ -203,7 +204,7 @@ def main(cfg, conditions, seeds, quick=False, suites=None):
             print(f"{cond}: skipped, {prov} has no api key")
             continue
         for seed in seeds:
-            out = RESULTS / f"{'quick-' if quick else ''}{cond}-s{seed}.jsonl"
+            out = results / f"{'quick-' if quick else ''}{cond}-s{seed}.jsonl"
             done = set()
             if out.exists():
                 done = {(json.loads(l)["suite"], json.loads(l)["id"]) for l in out.read_text(encoding="utf-8").splitlines() if l.strip()}
@@ -218,10 +219,10 @@ def main(cfg, conditions, seeds, quick=False, suites=None):
                           f"{rec.get('tokens', {}).get('total_tokens', 0)} tok {rec.get('answer', rec.get('error', ''))[:60]!r}", flush=True)
 
 
-def report(quick=False):
+def report(quick=False, tag=""):
     """Markdown tables from eval/results; the narrative in REPORT.md is written by hand."""
     recs = []
-    for p in sorted(RESULTS.glob(f"{'quick-' if quick else ''}[A-F]*-s*.jsonl")):
+    for p in sorted((RESULTS / tag).glob(f"{'quick-' if quick else ''}[A-F]*-s*.jsonl")):
         recs += [json.loads(l) for l in p.read_text(encoding="utf-8").splitlines() if l.strip()]
     recs = [r for r in recs if "error" not in r]
     conds = [c for c in CONDITIONS if any(r["cond"] == c for r in recs)]
@@ -248,6 +249,8 @@ def report(quick=False):
     table("stuck loop %", lambda rs: 100 * sum(r["stuck"] for r in rs) / len(rs))
     table("VRAM peak MB (max over items, includes the desktop)", lambda rs: max(r["vram_peak_mb"] for r in rs))
     table("simpleqa: abstained %", lambda rs: 100 * sum(r["abstained"] for r in rs) / len(rs), ["simpleqa"])
+    table("simpleqa: confident correct % (correct and not abstained)",   # v2 hedges; the v1 judge alone would credit a hedged right guess
+          lambda rs: 100 * sum(r["correct"] and not r["abstained"] for r in rs) / len(rs), ["simpleqa"])
     table("simpleqa: empty answer %", lambda rs: 100 * sum(not r["answer"].strip() for r in rs) / len(rs), ["simpleqa"])
     table("simpleqa: unsupported % (answered, not abstained, wrong)",
           lambda rs: 100 * sum(bool(r["answer"].strip()) and not r["abstained"] and not r["correct"] for r in rs) / len(rs),

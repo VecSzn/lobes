@@ -16,11 +16,14 @@ what changed and why in [docs/DECISIONS.md](docs/DECISIONS.md).
 ## What is in it
 
     executive    picks the route (rules first, a 1.2B model for the rest), writes the plan
-    perception   describes images and screenshots
-    reasoning    produces claims + answer, or asks for one python run first
+    perception   describes images and screenshots; an ocr engine reads them a second time
+    reasoning    produces claims + answer, or asks for one python run first; samples and
+                 picks when the task carries its own examples or nothing can check it
     motor        turns a plan step into one tool call
-    verifier     evidence check in code, then a blind re-solve or a generated test
-    language     final wording; a code check stops it from changing numbers
+    verifier     evidence check in code, then the task's own >>> examples, a test written
+                 without seeing the code, a blind re-solve, or a second look at the image
+    language     final wording; a code check stops it from changing numbers, and an
+                 answer nothing backs gets a "not sure" in front
 
 Which model fills which lobe is only in `lobes.yaml`. A lobe can point at a local
 GGUF (llama-server in router mode), an OpenAI-compatible remote, or plain code.
@@ -36,7 +39,8 @@ screenshot. Every tool output is a file in `runs/<task>/` and every claim that s
 
 ## Quick start
 
-Windows, NVIDIA GPU, Python 3.11+.
+NVIDIA GPU, Python 3.11+. Windows gets the llama.cpp release binary; Linux builds
+llama-server from source (git, cmake, nvcc on PATH).
 
     pip install -e .
     lobes install                   # llama.cpp + the GGUFs for the default profile
@@ -49,7 +53,7 @@ Windows, NVIDIA GPU, Python 3.11+.
 
 `lobes models` shows what is loaded and what it costs. `lobes ask --lobe reasoning --schema`
 talks to one lobe directly. `pip install -e .[dev,eval]` adds pytest and the parquet
-readers for `lobes eval`.
+readers for `lobes eval`; `.[ocr]` adds the second image reader (RapidOCR, cpu).
 
 ## Results
 

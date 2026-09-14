@@ -20,6 +20,7 @@ dependencies = [
 [project.optional-dependencies]
 dev = ["pytest>=8"]
 eval = ["pandas>=2", "pyarrow>=15"]
+ocr = ["rapidocr-onnxruntime>=1.4"]   # second reader for images, cpu, ~2 s per image
 
 [project.scripts]
 lobes = "lobes.cli:app"
