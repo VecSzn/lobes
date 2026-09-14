@@ -194,6 +194,62 @@ def test_effort_samples(tmp_path):
         runner.effort({"effort": "ultra"})
 
 
+def test_seed_per_call(tmp_path, monkeypatch):
+    """the eval fixes the seed; until the call index was folded in, every hot sample came back identical"""
+    seeds = []
+    monkeypatch.setattr(runner.providers, "chat",
+                        lambda p, m, msgs, **kw: (seeds.append(kw["seed"]), Reply("{}", {}, None, {}, 1, {}))[1])
+    monkeypatch.setattr(runner.ModelManager, "ensure", lambda self, name: None)
+    cfg = config.load()
+    cfg["_root"], cfg["seed"] = tmp_path, 7
+    ctx = runner.Ctx(cfg, "specialists", runner.Trace(tmp_path / "trace.jsonl"), tmp_path)
+    st = _state("who wrote it", None, "qa")
+    for _ in range(3):
+        ctx.chat(st, "reasoning", [])
+    assert seeds == [7, 8, 9]
+
+
+def test_raw_condition(monkeypatch):
+    """R is the model alone: one call, the judge reads the free text, humaneval takes the fenced block"""
+    from lobes import eval as ev
+    sent = []
+    reply = {"text": "3 apples and 6 pears.\n18"}
+    monkeypatch.setattr(ev.providers, "chat",
+                        lambda p, m, msgs, **kw: (sent.append((msgs, kw)), Reply(reply["text"], None, None, {"total_tokens": 5}, 1, {}))[1])
+    monkeypatch.setattr(models.ModelManager, "ensure", lambda self, name: None)
+    cfg = dict(config.load(), seed=4)
+    vram = type("V", (), {"peak": 0})()
+    rec = ev.run_item(cfg, "R", 4, "gsm8k", {"id": "g1", "prompt": "how many", "gold": "18"}, vram)
+    assert rec["correct"] and rec["calls"] == 1 and rec["swaps"] == 0 and "level" not in rec
+    assert sent[0][0][0]["content"].endswith(ev.RAW_TAIL) and sent[0][1]["seed"] == 4
+    reply["text"] = "Sure:\n```python\ndef add(a, b):\n    return a + b\n```\nthat is all"
+    he = {"id": "h1", "prompt": "add", "entry_point": "add", "source": "def add(a, b):\n", "test": "def check(c):\n    assert c(1, 2) == 3\n"}
+    assert ev.run_item(cfg, "R", 4, "humaneval", he, vram)["correct"]
+
+
+def test_forced_answer(monkeypatch):
+    """thinking that eats the whole cap gets a second, prefilled call that closes the think block and answers"""
+    from lobes import providers
+    bodies = []
+    replies = [{"choices": [{"message": {"content": "", "reasoning_content": "so far 23*40=920"}, "finish_reason": "length"}],
+                "usage": {"prompt_tokens": 10, "completion_tokens": 100, "total_tokens": 110}},
+               {"choices": [{"message": {"content": '"answer": "1081"}'}, "finish_reason": "stop"}],
+                "usage": {"prompt_tokens": 120, "completion_tokens": 8, "total_tokens": 128}}]
+
+    class Resp:
+        def __init__(self, j): self.j = j
+        def raise_for_status(self): pass
+        def json(self): return self.j
+    import copy
+    monkeypatch.setattr(providers.httpx, "post",
+                        lambda url, json, headers, timeout: (bodies.append(copy.deepcopy(json)), Resp(replies[len(bodies) - 1]))[1])
+    r = providers.chat({"base_url": "http://x"}, "m", [{"role": "user", "content": "q"}], schema={"type": "object"}, thinking=True, max_tokens=100)
+    assert r.forced and r.data == {"answer": "1081"} and r.usage["total_tokens"] == 238 and r.reasoning == "so far 23*40=920"
+    last = bodies[1]["messages"][-1]
+    assert last["role"] == "assistant" and last["reasoning_content"].endswith(providers.BUDGET_MSG) and last["content"] == "{"
+    assert bodies[1]["max_tokens"] == 2500 and bodies[0]["max_tokens"] == 100
+
+
 def test_reflect_and_score(tmp_path):
     from lobes.lobe import reasoning
     st = _state("who wrote it", "Alice", "qa")
@@ -264,3 +320,10 @@ def test_fast_route(tmp_path, monkeypatch):
                         Reply(text="hi there", data=None, reasoning=None, usage={}, ms=1, timings={}))
     state = runner.run(cfg, "hello", profile="specialists")
     assert state.route == "fast" and state.answer == "hi there" and state.steps == 0 and not state.verdicts
+
+
+def test_jsonl_line_separator(tmp_path):
+    from lobes import eval as ev
+    p = tmp_path / "x.jsonl"
+    p.write_text(json.dumps({"a": "one two"}, ensure_ascii=False) + "\n", encoding="utf-8")
+    assert ev.jsonl(p) == [{"a": "one two"}]

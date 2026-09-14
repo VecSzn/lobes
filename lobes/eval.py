@@ -12,8 +12,9 @@ from pathlib import Path
 
 import httpx
 
-from . import config
+from . import config, providers
 from .lobe.verifier import norm, nums, same
+from .models import ModelManager
 from .runner import EFFORT, run
 
 DATA = config.ROOT / "eval" / "data"
@@ -23,7 +24,15 @@ SHUFFLE_SEED = 20260914
 # ~10 h, so the pre-registered cut rule applied: seeds 1-2 multistep only, gsm8k/simpleqa 30, B3 dropped.
 N = {"gsm8k": 30, "humaneval": 30, "tools": 20, "simpleqa": 30, "ocrbench": 20, "multistep": 10}
 SMALL = 0                     # seeds 1 and 2: first SMALL items of every suite except multistep
+
+
+def jsonl(path):
+    # not splitlines(): a U+2028 inside a model's answer counts as a line break there and cuts the record in two
+    return [json.loads(l) for l in path.read_text(encoding="utf-8").split("\n") if l.strip()]
+
+
 CONDITIONS = {                # cfg overrides on top of the profile; see PREREG for what each one is
+    "R":  dict(profile="single-9b", raw=True),      # the 9B as shipped: one chat call, no lobes, no tools
     "A":  dict(profile="single-9b", no_escalate=True),
     "B":  dict(profile="single-4b", no_escalate=True),
     "B3": dict(profile="single-4b", no_escalate=True, vote=3),
@@ -102,7 +111,7 @@ def load_suite(name):
             it["images"] = [str(img)]
         return chosen
     else:                                       # tools, multistep: mine, small, all of them
-        return [json.loads(l) for l in (config.ROOT / "eval" / "suites" / f"{name}.jsonl").read_text(encoding="utf-8").splitlines() if l.strip()]
+        return jsonl(config.ROOT / "eval" / "suites" / f"{name}.jsonl")
     return _pick(items, name)
 
 
@@ -150,14 +159,16 @@ class Vram(threading.Thread):
                 self.peak = max(self.peak, int(line))
 
 
-def run_item(cfg, cond, seed, suite, item, vram):
+def run_item(cfg, cond, seed, suite, item, vram, tag=""):
     c = dict(cfg, seed=seed, **{k: v for k, v in CONDITIONS[cond].items() if k != "profile"})
-    task_id = f"eval-{cond}-s{seed}-{item['id']}"
+    task_id = f"eval-{tag + '-' if tag else ''}{cond}-s{seed}-{item['id']}"   # tagged runs keep their own traces
     shutil.rmtree(cfg["_root"] / "runs" / task_id, ignore_errors=True)
     vram.peak = 0
     t0 = time.perf_counter()
     rec = {"cond": cond, "seed": seed, "suite": suite, "id": item["id"], "task_id": task_id, "effort": c.get("effort") or "medium"}
     try:
+        if c.get("raw"):
+            return raw_item(c, cond, suite, item, vram, rec)
         st = run(c, item["prompt"], profile=CONDITIONS[cond]["profile"], images=item.get("images"), task_id=task_id)
     except Exception as e:                      # one broken item must not kill the night
         rec.update(error=repr(e)[:500], ms=int((time.perf_counter() - t0) * 1000), correct=False, abstained=False)
@@ -166,19 +177,46 @@ def run_item(cfg, cond, seed, suite, item, vram):
     lobe_ms = {}
     for lobe, _, ms, _ in st.calls:
         lobe_ms[lobe] = lobe_ms.get(lobe, 0) + ms
-    swap_ms = 0
-    for l in (cfg["_root"] / "runs" / task_id / "trace.jsonl").read_text(encoding="utf-8").splitlines():
-        r = json.loads(l)
+    swap_ms = forced = 0
+    for r in jsonl(cfg["_root"] / "runs" / task_id / "trace.jsonl"):
         if r["kind"] == "model":
             swap_ms += r["ms"]
+        forced += r["kind"] == "call" and bool(r.get("forced"))
     last = st.verdicts[-1] if st.verdicts else None
     rec.update(answer=(st.answer or "")[:1000], correct=correct, abstained=abstained, task_class=st.task_class,
                tokens=st.usage, ms=st.ms(), lobe_ms=lobe_ms, swaps=st.swaps, swap_ms=swap_ms, vram_peak_mb=vram.peak,
                steps=st.steps, retries=st.retries, escalations=st.escalations, calls=len(st.calls),
                basis=last.basis if last else None, passed=bool(last and last.verdict == "PASS"), level=st.effort,
-               stuck=st.steps >= EFFORT[st.effort]["steps"] and not (last and last.verdict == "PASS"))
+               stuck=st.steps >= EFFORT[st.effort]["steps"] and not (last and last.verdict == "PASS"), forced=forced)
     if suite in ("gsm8k", "tools"):             # lenient twin of the strict judge, reported next to it
         rec["gold_in_answer"] = item.get("gold", item.get("answer")).replace(",", "") in nums(st.answer or "")
+    return rec
+
+
+RAW_TAIL = "\n\nEnd your reply with the final answer alone on the last line."
+
+
+def raw_item(cfg, cond, suite, item, vram, rec):
+    """The model on its own: one chat call at the runner's cold-sample temperature and seed, thinking left at the
+    template default, no tools, no images. The judges read free text, so the prompt asks for the answer last."""
+    t0 = time.perf_counter()
+    prov, model = config.lobe(cfg, "reasoning", CONDITIONS[cond]["profile"])
+    mm = ModelManager(cfg)
+    mm.ensure(model)
+    r = providers.chat(cfg["providers"][prov], model, [{"role": "user", "content": item["prompt"] + RAW_TAIL}],
+                       temperature=0.2, max_tokens=12000, seed=cfg.get("seed"))
+    answer = r.text.strip()
+    if suite == "humaneval":
+        blocks = re.findall(r"```\w*\n(.*?)```", answer, re.S)   # the judge runs the answer as code
+        answer = blocks[-1] if blocks else answer
+    correct, abstained = judge(suite, item, answer)
+    rec.update(answer=answer[:1000], correct=correct, abstained=abstained, task_class="raw", tokens=r.usage,
+               ms=int((time.perf_counter() - t0) * 1000), lobe_ms={"raw": r.ms},
+               swaps=sum(op == "load" for _, op, _, _ in mm.events), swap_ms=sum(ms for _, op, ms, _ in mm.events),
+               vram_peak_mb=vram.peak, steps=1, retries=0, escalations=0, calls=1, basis=None, passed=None,
+               stuck=False, finish=r.finish, forced=int(r.forced))
+    if suite in ("gsm8k", "tools"):
+        rec["gold_in_answer"] = item.get("gold", item.get("answer")).replace(",", "") in nums(answer)
     return rec
 
 
@@ -207,12 +245,12 @@ def main(cfg, conditions, seeds, quick=False, suites=None, tag=""):
             out = results / f"{'quick-' if quick else ''}{cond}-s{seed}.jsonl"
             done = set()
             if out.exists():
-                done = {(json.loads(l)["suite"], json.loads(l)["id"]) for l in out.read_text(encoding="utf-8").splitlines() if l.strip()}
+                done = {(r["suite"], r["id"]) for r in jsonl(out)}
             for suite, items in plan(cond, seed, quick, suites):
                 for item in items:
                     if (suite, item["id"]) in done:
                         continue
-                    rec = run_item(cfg, cond, seed, suite, item, vram)
+                    rec = run_item(cfg, cond, seed, suite, item, vram, tag)
                     with open(out, "a", encoding="utf-8") as f:
                         f.write(json.dumps(rec, ensure_ascii=False) + "\n")
                     print(f"{cond} s{seed} {suite} {item['id']}: {'ok' if rec['correct'] else 'x '} {rec['ms']} ms "
@@ -222,8 +260,8 @@ def main(cfg, conditions, seeds, quick=False, suites=None, tag=""):
 def report(quick=False, tag=""):
     """Markdown tables from eval/results; the narrative in REPORT.md is written by hand."""
     recs = []
-    for p in sorted((RESULTS / tag).glob(f"{'quick-' if quick else ''}[A-F]*-s*.jsonl")):
-        recs += [json.loads(l) for l in p.read_text(encoding="utf-8").splitlines() if l.strip()]
+    for p in sorted((RESULTS / tag).glob(f"{'quick-' if quick else ''}[A-Z]*-s*.jsonl")):
+        recs += jsonl(p)
     recs = [r for r in recs if "error" not in r]
     conds = [c for c in CONDITIONS if any(r["cond"] == c for r in recs)]
     out = []
@@ -247,6 +285,8 @@ def report(quick=False, tag=""):
     table("mean seconds", sec)
     table("mean swaps", lambda rs: statistics.mean(r["swaps"] for r in rs))
     table("stuck loop %", lambda rs: 100 * sum(r["stuck"] for r in rs) / len(rs))
+    table("items with a forced answer % (thinking hit its cap, answered from the partial reasoning)",
+          lambda rs: 100 * sum(bool(r.get("forced")) for r in rs) / len(rs))
     table("VRAM peak MB (max over items, includes the desktop)", lambda rs: max(r["vram_peak_mb"] for r in rs))
     table("simpleqa: abstained %", lambda rs: 100 * sum(r["abstained"] for r in rs) / len(rs), ["simpleqa"])
     table("simpleqa: confident correct % (correct and not abstained)",   # v2 hedges; the v1 judge alone would credit a hedged right guess
@@ -270,7 +310,41 @@ def report(quick=False, tag=""):
     for s in N:
         rs = [r for r in recs if r["cond"] == "E" and r["suite"] == s and r["seed"] == 0 and r.get("escalations")]
         out.append(f"| {s} | {len(rs)} | {sum(r['correct'] for r in rs)} |")
+    if any("level" in r for r in recs):
+        out += _traces(recs, conds)
     return "\n".join(out)
+
+
+def _traces(recs, conds):
+    """v3 rows read from the traces: which level the answer came from, and whether reflection and search fixed more
+    candidates than they broke. Judged per change on the candidate answers, not on the final answer."""
+    items = {(s, it["id"]): it for s in N for it in load_suite(s)}
+    out = ["\n### v3 from traces (seed 0): level the answer came from; reflection and search changes\n\n"
+           "| cond | medium | high | xhigh | reflect asked / changed / fixed / broke | search steps / not first / fixed / broke |\n"
+           "|---|---|---|---|---|---|"]
+    for c in conds:
+        lv, rf, se = {}, [0, 0, 0, 0], [0, 0, 0, 0]
+        for r in (r for r in recs if r["cond"] == c and r["seed"] == 0 and "level" in r):
+            lv[r["level"]] = lv.get(r["level"], 0) + 1
+            p = config.ROOT / "runs" / r["task_id"] / "trace.jsonl"
+            if not p.exists():
+                continue
+            ok = lambda a: judge(r["suite"], items[(r["suite"], r["id"])], a)[0]   # noqa: E731
+            for t in jsonl(p):
+                if t["kind"] == "reflect":
+                    rf[0] += 1
+                    if t["changed"]:
+                        b, a = ok(t["before"]), ok(t["answer"])
+                        rf[1] += 1; rf[2] += a and not b; rf[3] += b and not a
+                elif t["kind"] == "search":
+                    i = t["scores"].index(max(t["scores"]))
+                    se[0] += 1
+                    if i:
+                        b, a = ok(t["answers"][0]), ok(t["answers"][i])
+                        se[1] += 1; se[2] += a and not b; se[3] += b and not a
+        out.append(f"| {c} | " + " | ".join(str(lv.get(l, 0)) for l in ("medium", "high", "xhigh")) +
+                   f" | {' / '.join(map(str, rf))} | {' / '.join(map(str, se))} |")
+    return out
 
 
 if __name__ == "__main__":

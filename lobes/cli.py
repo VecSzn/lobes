@@ -122,7 +122,7 @@ def ask(prompt: str,
 
 
 @app.command("eval")
-def eval_(conditions: str = "A,B,B3,C,D,E,F", seeds: str = "0,1,2", suites: str = None,
+def eval_(conditions: str = "R,A,B,B3,C,D,E,F", seeds: str = "0,1,2", suites: str = None,
           quick: bool = typer.Option(False, help="3 items per suite, for timing"),
           tag: str = typer.Option("", help="subdirectory of eval/results, one per code version or machine"),
           effort: str = typer.Option(None, help="low, medium, high, xhigh, max or auto, for every condition; default is effort in lobes.yaml"),
