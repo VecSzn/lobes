@@ -248,10 +248,12 @@ def report(quick=False):
     table("stuck loop %", lambda rs: 100 * sum(r["stuck"] for r in rs) / len(rs))
     table("VRAM peak MB (max over items, includes the desktop)", lambda rs: max(r["vram_peak_mb"] for r in rs))
     table("simpleqa: abstained %", lambda rs: 100 * sum(r["abstained"] for r in rs) / len(rs), ["simpleqa"])
-    table("simpleqa: unsupported % (answered and wrong)",
-          lambda rs: 100 * sum((not r["abstained"]) and (not r["correct"]) for r in rs) / len(rs), ["simpleqa"])
-    table("lenient: gold number anywhere in the answer %",
-          lambda rs: 100 * sum(r.get("gold_in_answer", False) for r in rs) / len(rs), ["gsm8k", "tools"])
+    table("simpleqa: empty answer %", lambda rs: 100 * sum(not r["answer"].strip() for r in rs) / len(rs), ["simpleqa"])
+    table("simpleqa: unsupported % (answered, not abstained, wrong)",
+          lambda rs: 100 * sum(bool(r["answer"].strip()) and not r["abstained"] and not r["correct"] for r in rs) / len(rs),
+          ["simpleqa"])
+    table("lenient: gold number anywhere in the answer %",  # or-ed with strict: "42.0" vs gold "42" misses the string test
+          lambda rs: 100 * sum(r["correct"] or r.get("gold_in_answer", False) for r in rs) / len(rs), ["gsm8k", "tools"])
     out.append("\n### multistep across seeds: accuracy % per seed, mean, std\n\n| cond | s0 | s1 | s2 | mean | std |\n|---|---|---|---|---|---|")
     for c in conds:
         per = []
