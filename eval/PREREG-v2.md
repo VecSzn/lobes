@@ -45,6 +45,13 @@ is the only way to separate "the code changed" from "the machine changed".
    untouched and hedged answers count as abstained. The report adds "confident
    correct" (correct and not abstained) next to the v1 "correct".
 
+9. effort levels: the numbers above (three samples, two retries, ten steps, thinking on
+   the retry, 6000 thinking tokens) are the `medium` row of one table; `low`, `high`,
+   `xhigh` and `max` scale them together (README has the table). Added after 1-8 and
+   before any run. Every v1-vs-v2 comparison is at medium, which is the v1 budget, so
+   this change is invisible to V1-V5. One extra run, D at high, is reported on its own
+   line and tests nothing pre-registered; it is there to see what more compute buys.
+
 ## Hypotheses, decided now
 
 V1. Each change holds on the suite it was made for: tools and humaneval up for D (2,
@@ -63,6 +70,6 @@ V5. v1 on the 5090 reproduces v1 on the 4070 within 5 points per suite for A and
 ## Conditions to run
 
 A, D, E at `v1-4070` and at v2 on the pod, seed 0 in full and seeds 1-2 multistep as
-in the cut plan. B and C at v2 if time allows. F only with a key. Results go to
-`eval/results/5090-v1/` and `eval/results/5090-v2/` (the `--tag` option); the 4070 run
-stays in `eval/results/`.
+in the cut plan, all at effort medium. Then D at high, seed 0. B and C at v2 if time
+allows. F only with a key. Results go to `eval/results/5090-v1/`, `5090-v2/` and
+`5090-v2-high/` (the `--tag` option); the 4070 run stays in `eval/results/`.

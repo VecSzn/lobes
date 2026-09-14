@@ -47,7 +47,8 @@ def make_app(cfg, default_profile=None):
         model = body.get("model") or ""
         profile = model.split("/", 1)[1] if model.startswith("lobes/") else default_profile or cfg["profile"]
         goal, images = _goal(body.get("messages", []), imgdir)
-        state = await run_in_threadpool(run, cfg, goal, profile=profile, images=images)
+        c = dict(cfg, effort=body["reasoning_effort"]) if body.get("reasoning_effort") else cfg   # openai's field name
+        state = await run_in_threadpool(run, c, goal, profile=profile, images=images)
         usage = {k: state.usage.get(k, 0) for k in ("prompt_tokens", "completion_tokens", "total_tokens")}
         extra = {"task_id": state.task_id, "task_class": state.task_class, "steps": state.steps, "retries": state.retries,
                  "escalations": state.escalations, "swaps": state.swaps, "ms": state.ms(),

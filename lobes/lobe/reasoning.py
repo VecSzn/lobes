@@ -19,17 +19,18 @@ descriptions) and reply with JSON matching the schema.
 
 
 def solve(ctx, state):
-    # a retry has to change something: thinking on first, then three hot samples and a vote.
-    # cfg["vote"] forces the vote from the start (the equal-compute single-model control in the eval).
-    # closed-book qa always votes: with nothing to check against, the samples agreeing is the only evidence.
-    vote = ctx.cfg.get("vote", 0)
-    thinking = state.retries >= 1
+    # a retry has to change something: thinking on (medium turns it on here, high and up from the start),
+    # then n hot samples and a vote. cfg["vote"] forces the vote from the start (the equal-compute single-model
+    # control in the eval). closed-book qa always votes: with nothing to check against, the samples agreeing
+    # is the only evidence. how many samples, and whether thinking is ever on, is the effort level.
+    e = ctx.effort
+    thinking = e["think"] == "always" or (e["think"] == "retry" and state.retries >= 1)
+    n = ctx.cfg.get("vote") or e["n"]
     closed = state.task_class == "qa" and not state.tool_results and not state.images
     if state.task_class == "code" and examples(state.goal):
-        return _best_code(ctx, state, thinking)
-    if state.retries < 2 and not vote and not closed:
+        return _best_code(ctx, state, thinking, n)
+    if n == 1 or (state.retries < 2 and not ctx.cfg.get("vote") and not closed):
         return _one(ctx, state, thinking=thinking, temperature=0.2)
-    n = vote or 3
     envs = [_one(ctx, state, thinking=thinking, temperature=0.2 if i == 0 else 0.7) for i in range(n)]
     agree = [sum(same(e.answer, o.answer) for o in envs) for e in envs]
     best = envs[max(range(n), key=agree.__getitem__)]
@@ -41,8 +42,8 @@ def solve(ctx, state):
     return best
 
 
-def _best_code(ctx, state, thinking):
-    """The task carries its own >>> examples: run them on the first sample, and only if it fails draw two more
+def _best_code(ctx, state, thinking, n):
+    """The task carries its own >>> examples: run them on the first sample, and only if it fails draw n-1 more
     and keep the one that passes most. Costs nothing when the first is right."""
     env = _one(ctx, state, thinking=thinking, temperature=0.2)
     if env.next.action == "tool":
@@ -50,9 +51,11 @@ def _best_code(ctx, state, thinking):
     score = [doctest_check(ctx, unfence(env.answer), state.goal)]
     envs = [env]
     if score[0][0] < score[0][1]:
-        for _ in range(2):
+        for _ in range(n - 1):
             envs.append(_one(ctx, state, thinking=thinking, temperature=0.7))
             score.append(doctest_check(ctx, unfence(envs[-1].answer), state.goal))
+            if score[-1][0] == score[-1][1]:
+                break
     i = max(range(len(envs)), key=lambda k: score[k][0])
     ctx.trace.write("best_of", passed=[s[0] for s in score], attempted=score[0][1], chosen=i)
     return envs[i]
@@ -60,10 +63,11 @@ def _best_code(ctx, state, thinking):
 
 def _one(ctx, state, *, thinking, temperature):
     msgs = [{"role": "system", "content": SYS}, {"role": "user", "content": brief(state)}]
+    budget = ctx.effort["budget"] or ctx.cfg.get("llama", {}).get("ctx", 16384)
     r = ctx.chat(state, "reasoning", msgs, schema=schema, thinking=thinking, temperature=temperature,
-                 max_tokens=6000 if thinking else 2500)
+                 max_tokens=budget if thinking else 2500)
     if r.data is None and thinking:
-        # the 9B thinks past 6000 tokens on some SimpleQA items and returns nothing; a plain answer beats none
+        # the 9B thinks past the budget on some SimpleQA items and returns nothing; a plain answer beats none
         r = ctx.chat(state, "reasoning", msgs, schema=schema, thinking=False, temperature=temperature, max_tokens=2500)
     if r.data is None:
         return Envelope(kind="step_result", goal=state.goal, answer=r.text[:2000],

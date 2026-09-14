@@ -59,6 +59,10 @@ providers:
   openai:   { type: openai, base_url: https://api.openai.com/v1, api_key: "${OPENAI_API_KEY}" }
   deepseek: { type: openai, base_url: https://api.deepseek.com/v1, api_key: "${DEEPSEEK_API_KEY}", json: object }   # no json_schema there
 
+# low | medium | high | xhigh | max: thinking, samples, retries, steps scale together (EFFORT in runner.py).
+# xhigh and max think past 16k tokens, so raise ctx above their cap before using them.
+effort: medium
+
 # a lobe is filled with "provider/model", or a non-LLM implementation name.
 profile: specialists
 profiles:

@@ -2,6 +2,7 @@
 
 一行一条，倒序。写这个是因为过两周我自己都会忘了当时为什么这么选。
 
+- 2026-09-14 加 effort 档位（low/medium/high/xhigh/max）：想不想、想多少 token、投票抽几个、重试几次、最多几步、要不要升级，全挂在 runner.py 的一张表上，medium 就是原来写死的那组数。入口是 lobes.yaml 的 `effort:`、`lobes ask --effort`、api 的 `reasoning_effort`。5090 上的 v1/v2 对比全在 medium，另跑一组 D 的 high 单独列。
 - 2026-09-14 v2 起点：4070 上 v1 跑到 A、D 全量、E 一半时看了 trace，改动都对着具体失败项，规则写在 eval/PREREG-v2.md，v1 代码打了 tag `v1-4070`，两版都在租的 5090 上重跑才能比。评测结果目录加 `--tag`，一版一个目录。
 - 2026-09-14 SimpleQA 改成有话直说：最终没过验证、或 PASS 但 basis 是 none 的答案，language 前面加 "Not sure. Best guess: "。v1 的弃权正则本来就抓 "not sure"，所以判分代码不动，报表多一列"答了且对"（correct 且没弃权）。v1 里 D 的 SimpleQA 弃权 0%、答了且错 63%，verifier 那条盲解在闭卷常识题上就是两个小模型互相猜，没意义。
 - 2026-09-14 闭卷 qa（没工具输出、没图）reasoning 一律 3 采样：0.2 一个、0.7 两个，三个一致才给 basis consistency，否则 none 走 hedge。代码题如果题干自带 `>>>` 例子，第一个样本先过例子，过了就用，不过再抽两个挑过得最多的。用户要的"多跑几遍选最好"就是这两条，别的题不多跑。

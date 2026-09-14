@@ -129,8 +129,9 @@ def test_state_machine(tmp_path, monkeypatch):
 
 class FakeCtx:
     """Enough of runner.Ctx for the verifier: every lobe is a model, chat replays canned replies."""
-    def __init__(self, tmp_path, replies):
-        self.workdir, self.rundir, self.replies, self.cfg = tmp_path, tmp_path, iter(replies), {}
+    def __init__(self, tmp_path, replies, **cfg):
+        self.workdir, self.rundir, self.replies, self.cfg = tmp_path, tmp_path, iter(replies), cfg
+        self.effort = runner.effort(cfg)
         self.trace = type("T", (), {"write": staticmethod(lambda *a, **k: None)})
 
     def is_model(self, lobe):
@@ -175,6 +176,21 @@ def test_verifier_paths(tmp_path):
     st.candidate.confidence.basis = "consistency"
     v = verifier.verify(FakeCtx(tmp_path, [{"answer": "Bob", "check": None}]), st)
     assert (v.verdict, v.basis) == ("PASS", "consistency")
+
+
+def test_effort_samples(tmp_path):
+    """closed-book qa draws as many samples as the level says; unanimity is the only route to consistency"""
+    from lobes.lobe import reasoning
+    env = {"kind": "step_result", "goal": "g", "answer": "Alice", "next": {"action": "answer"}, "claims": []}
+    for level, n in (("low", 1), ("medium", 3), ("high", 5), ("max", 12)):
+        ctx = FakeCtx(tmp_path, [env] * n, effort=level)
+        out = reasoning.solve(ctx, _state("who wrote it", None, "qa"))
+        assert next(ctx.replies, None) is None, level                    # every reply consumed, no extra call made
+        assert (out.confidence.basis == "consistency") == (n > 1), level
+    ctx = FakeCtx(tmp_path, [env, dict(env, answer="Bob"), env], effort="medium")
+    assert reasoning.solve(ctx, _state("who wrote it", None, "qa")).confidence.basis == "self"
+    with pytest.raises(ValueError):
+        runner.effort({"effort": "ultra"})
 
 
 def test_hedge_and_override(tmp_path):

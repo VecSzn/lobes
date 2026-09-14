@@ -13,8 +13,21 @@ from . import config, providers, tools
 from .models import ModelManager
 from .schema import Envelope, Observation
 
-MAX_STEPS, MAX_RETRIES = 10, 2
 LADDER = ("escalate", "remote")      # who takes over reasoning once retries are used up, in this order
+EFFORT = {   # reasoning_effort: when thinking turns on, its token cap, samples per vote, retries, steps, the ladder
+    "low":    dict(think="never",  budget=0,     n=1,  retries=1, steps=6,  ladder=False),
+    "medium": dict(think="retry",  budget=6000,  n=3,  retries=2, steps=10, ladder=True),
+    "high":   dict(think="always", budget=16000, n=5,  retries=3, steps=14, ladder=True),
+    "xhigh":  dict(think="always", budget=32000, n=8,  retries=4, steps=20, ladder=True),
+    "max":    dict(think="always", budget=None,  n=12, retries=6, steps=30, ladder=True),   # None: the context is the cap
+}
+
+
+def effort(cfg):
+    level = cfg.get("effort") or "medium"
+    if level not in EFFORT:
+        raise ValueError(f"effort must be one of {list(EFFORT)}, not {level!r}")
+    return EFFORT[level]
 
 
 class Trace:
@@ -63,6 +76,7 @@ class TaskState:
 class Ctx:
     def __init__(self, cfg, profile, trace, rundir):
         self.cfg, self.profile, self.trace, self.rundir = cfg, profile, trace, rundir
+        self.effort = effort(cfg)
         self.workdir = rundir / "work"
         self.workdir.mkdir(parents=True, exist_ok=True)
         self.mm = ModelManager(cfg)
@@ -125,7 +139,7 @@ def run(cfg, goal, *, profile=None, images=None, task_id=None):
     trace = Trace(rundir / "trace.jsonl")
     ctx = Ctx(cfg, profile or cfg["profile"], trace, rundir)
     state = TaskState(task_id, goal, [str(p) for p in images or []])
-    trace.write("start", goal=goal, profile=ctx.profile, images=state.images)
+    trace.write("start", goal=goal, profile=ctx.profile, images=state.images, effort=cfg.get("effort") or "medium")
 
     executive.intake(ctx, state)
     trace.write("intake", task_class=state.task_class, route=state.route)
@@ -138,9 +152,10 @@ def run(cfg, goal, *, profile=None, images=None, task_id=None):
     state.plan = executive.plan(ctx, state)
     trace.write("plan", plan=state.plan.model_dump())
     next_lobe = "motor" if state.plan.next.action == "tool" else "reasoning"
-    rungs = [] if cfg.get("no_escalate") else [s for s in LADDER if ctx.is_model(s)]   # eval turns the ladder off
+    e = ctx.effort
+    rungs = [] if cfg.get("no_escalate") or not e["ladder"] else [s for s in LADDER if ctx.is_model(s)]   # eval turns the ladder off
 
-    while state.steps < MAX_STEPS:
+    while state.steps < e["steps"]:
         state.steps += 1
         if next_lobe == "motor":
             env = motor.act(ctx, state)
@@ -162,7 +177,7 @@ def run(cfg, goal, *, profile=None, images=None, task_id=None):
         if v.verdict == "VERIFY_WITH_TOOL" and v.proposed_check:
             run_tools(ctx, state, [v.proposed_check])
             continue
-        if state.retries < MAX_RETRIES:
+        if state.retries < e["retries"]:
             state.retries += 1          # reasoning.solve changes thinking/temperature with this
             continue
         if state.escalations < len(rungs):

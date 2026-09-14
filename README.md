@@ -47,6 +47,7 @@ llama-server from source (git, cmake, nvcc on PATH).
     lobes serve                     # keep this running
     lobes ask "what is 17 * 23"
     lobes ask --image shot.png "what is on this screen"
+    lobes ask --effort high "..."   # low | medium | high | xhigh | max, see below
     lobes api                       # OpenAI-compatible /v1/chat/completions on :8090
 
     curl http://127.0.0.1:8090/v1/chat/completions -d '{"model":"lobes/specialists","messages":[{"role":"user","content":"what is 19 * 21"}]}'
@@ -54,6 +55,22 @@ llama-server from source (git, cmake, nvcc on PATH).
 `lobes models` shows what is loaded and what it costs. `lobes ask --lobe reasoning --schema`
 talks to one lobe directly. `pip install -e .[dev,eval]` adds pytest and the parquet
 readers for `lobes eval`; `.[ocr]` adds the second image reader (RapidOCR, cpu).
+
+Effort is one knob for everything that costs time: whether the reasoning model thinks
+and how long, how many samples a vote draws, how many retries and steps a task gets,
+and whether the escalation ladder is on. `effort:` in lobes.yaml is the default
+(medium), `--effort` overrides it per call, and the api reads OpenAI's
+`reasoning_effort` field. The table is `EFFORT` in lobes/runner.py.
+
+| level  | thinking        | think tokens | samples | retries | steps |
+|--------|-----------------|--------------|---------|---------|-------|
+| low    | never           | 0            | 1       | 1       | 6     |
+| medium | on the retry    | 6000         | 3       | 2       | 10    |
+| high   | always          | 16000        | 5       | 3       | 14    |
+| xhigh  | always          | 32000        | 8       | 4       | 20    |
+| max    | always          | ctx          | 12      | 6       | 30    |
+
+low also turns the ladder off. xhigh and max need `ctx` above their thinking cap.
 
 ## Results
 
