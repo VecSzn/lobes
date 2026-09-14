@@ -1,0 +1,10 @@
+{"id": "multi-00", "name": "write then sum", "prompt": "write a file numbers.txt with the integers 1 to 20, one per line, then read the file back and tell me the sum of the numbers in it", "answers": ["210"]}
+{"id": "multi-01", "name": "fib digits", "prompt": "compute the 30th fibonacci number (fib(1) = fib(2) = 1) and then tell me how many digits it has", "answers": ["832040", "6"]}
+{"id": "multi-02", "name": "palindrome script", "prompt": "create a python file pal.py that defines is_palindrome(s), run it on 'racecar' and 'lobes', and report both results", "answers": ["True", "False"]}
+{"id": "multi-03", "name": "days and weekday", "prompt": "how many days are there from 2000-01-01 to 2026-09-14, and what weekday is 2026-09-14", "answers": ["9753", "Monday"]}
+{"id": "multi-04", "name": "prime factors", "prompt": "find the distinct prime factors of 360360 and give their sum", "answers": ["41"]}
+{"id": "multi-05", "name": "csv stats", "prompt": "write a csv file scores.csv with columns name,score and rows ann,80 bob,95 cid,70 dee,85, then compute the average score and the name with the highest score", "answers": ["82.5", "bob"]}
+{"id": "multi-06", "name": "collatz", "prompt": "how many steps does the collatz sequence starting at 27 take to reach 1, and what is the largest value it reaches", "answers": ["111", "9232"]}
+{"id": "multi-07", "name": "word freq", "prompt": "write the sentence 'the cat and the dog and the bird' to words.txt, then count how many times each word appears and tell me the most frequent word and its count", "answers": ["the", "3"]}
+{"id": "multi-08", "name": "sqrt digits", "prompt": "compute the square root of 2 to 20 decimal places and tell me the 15th decimal digit", "answers": ["1.41421356237309504880", "5"]}
+{"id": "multi-09", "name": "temp convert", "prompt": "convert 98.6 fahrenheit to celsius (one decimal) and then that celsius value to kelvin (one decimal)", "answers": ["37.0", "310.2"]}

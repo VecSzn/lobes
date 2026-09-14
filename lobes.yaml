@@ -1,0 +1,110 @@
+# everything about which model does what lives here. code never hardcodes a model name.
+
+llama:
+  release: b10951            # ggml-org/llama.cpp release tag
+  cuda: "13.3"               # driver 610 supports 13.x; use "12.4" on older drivers
+  host: 127.0.0.1
+  port: 8080
+  ctx: 16384
+  vram_budget_mb: 6400       # 8188 total minus what the desktop already holds; recalibrate from `lobes models`
+
+# name -> where to get it, how much GPU memory it takes, where it runs.
+# vram_mb = nvidia-smi delta measured 2026-09-14 after loading with ctx 16384, 4 slots, and one 512-token generation
+models:
+  lfm2.5-1.2b:
+    repo: LiquidAI/LFM2.5-1.2B-Instruct-GGUF
+    file: LFM2.5-1.2B-Instruct-Q4_K_M.gguf
+    device: cpu
+    resident: true
+    vram_mb: 0
+  qwen3.5-2b:
+    repo: unsloth/Qwen3.5-2B-GGUF
+    file: Qwen3.5-2B-Q4_K_M.gguf
+    mmproj: mmproj-F16.gguf
+    vram_mb: 2600
+    thinking: true
+  qwen3.5-4b:
+    repo: unsloth/Qwen3.5-4B-GGUF
+    file: Qwen3.5-4B-Q4_K_M.gguf
+    vram_mb: 3400
+    thinking: true
+  qwen3.5-4b-vl:
+    repo: unsloth/Qwen3.5-4B-GGUF
+    file: Qwen3.5-4B-Q4_K_M.gguf
+    mmproj: mmproj-F16.gguf
+    vram_mb: 4300
+    thinking: true
+  granite-h-micro:
+    repo: ibm-granite/granite-4.0-h-micro-GGUF
+    file: granite-4.0-h-micro-Q4_K_M.gguf
+    vram_mb: 2400
+  gemma4-e2b:
+    repo: unsloth/gemma-4-E2B-it-GGUF
+    file: gemma-4-E2B-it-Q4_K_M.gguf
+    vram_mb: 1700
+  nemotron-nano-4b:
+    repo: lmstudio-community/NVIDIA-Nemotron-3-Nano-4B-GGUF
+    file: NVIDIA-Nemotron-3-Nano-4B-Q4_K_M.gguf
+    vram_mb: 3200
+    thinking: true
+  qwen3.5-9b:
+    repo: unsloth/Qwen3.5-9B-GGUF
+    file: Qwen3.5-9B-IQ4_XS.gguf
+    vram_mb: 5200
+    thinking: true
+
+providers:
+  local:    { type: openai, base_url: http://127.0.0.1:8080/v1 }
+  lmstudio: { type: openai, base_url: http://127.0.0.1:1234/v1 }
+  openai:   { type: openai, base_url: https://api.openai.com/v1, api_key: "${OPENAI_API_KEY}" }
+  deepseek: { type: openai, base_url: https://api.deepseek.com/v1, api_key: "${DEEPSEEK_API_KEY}", json: object }   # no json_schema there
+
+# a lobe is filled with "provider/model", or a non-LLM implementation name.
+profile: specialists
+profiles:
+  specialists:                      # one family per lobe where it doesn't hurt; swapping is the normal case
+    executive:  local/lfm2.5-1.2b
+    perception: local/qwen3.5-2b
+    reasoning:  local/qwen3.5-4b
+    motor:      local/granite-h-micro
+    language:   local/gemma4-e2b
+    verifier:   local/gemma4-e2b      # nemotron-nano-4b was the plan; it answers blind re-solves with punctuation, see DECISIONS
+    escalate:   local/qwen3.5-9b
+    remote:     deepseek/deepseek-chat   # last rung, only used when the key is set
+  shared:                           # same weights, different prompts; nothing swaps except escalate
+    executive:  local/lfm2.5-1.2b
+    perception: local/qwen3.5-4b-vl
+    reasoning:  local/qwen3.5-4b-vl
+    motor:      local/qwen3.5-4b-vl
+    language:   passthrough
+    verifier:   local/qwen3.5-4b-vl
+    escalate:   local/qwen3.5-9b
+    remote:     deepseek/deepseek-chat
+  # eval controls: one model in every slot, same scaffolding. "none" = slot empty (no escalation, no vision)
+  single-9b:
+    executive:  local/qwen3.5-9b
+    perception: none
+    reasoning:  local/qwen3.5-9b
+    motor:      local/qwen3.5-9b
+    language:   passthrough
+    verifier:   local/qwen3.5-9b
+    escalate:   none
+    remote:     none
+  single-4b:
+    executive:  local/qwen3.5-4b-vl
+    perception: local/qwen3.5-4b-vl
+    reasoning:  local/qwen3.5-4b-vl
+    motor:      local/qwen3.5-4b-vl
+    language:   passthrough
+    verifier:   local/qwen3.5-4b-vl
+    escalate:   none
+    remote:     none
+  remote:                           # eval condition F, only runs with a key in .env
+    executive:  deepseek/deepseek-chat
+    perception: none
+    reasoning:  deepseek/deepseek-chat
+    motor:      deepseek/deepseek-chat
+    language:   passthrough
+    verifier:   deepseek/deepseek-chat
+    escalate:   none
+    remote:     none

@@ -1,0 +1,20 @@
+{"id": "tools-00", "name": "days between", "prompt": "how many days are there between 2024-02-10 and 2026-09-14", "answer": "947"}
+{"id": "tools-01", "name": "sha256 prefix", "prompt": "what are the first 8 hex characters of the sha256 of the string 'lobes'", "answer": "20515122"}
+{"id": "tools-02", "name": "2**100 mod 997", "prompt": "what is 2 to the power 100 modulo 997", "answer": "907"}
+{"id": "tools-03", "name": "fib 50", "prompt": "what is the 50th fibonacci number, counting fib(1) = fib(2) = 1", "answer": "12586269025"}
+{"id": "tools-04", "name": "primes below 1000", "prompt": "how many prime numbers are there below 1000", "answer": "168"}
+{"id": "tools-05", "name": "hex to dec", "prompt": "convert the hexadecimal number 0x1F3A to decimal", "answer": "7994"}
+{"id": "tools-06", "name": "weekday", "prompt": "what day of the week is 2026-09-14", "answer": "Monday"}
+{"id": "tools-07", "name": "digit sum", "prompt": "what is the sum of the digits of 987654321", "answer": "45"}
+{"id": "tools-08", "name": "base 7", "prompt": "write 12345 in base 7", "answer": "50664"}
+{"id": "tools-09", "name": "reverse", "prompt": "reverse the string 'modular brain' character by character", "answer": "niarb raludom"}
+{"id": "tools-10", "name": "mean", "prompt": "what is the mean of 3, 7, 8, 15 and 22, to one decimal place", "answer": "11.0"}
+{"id": "tools-11", "name": "gcd", "prompt": "what is the greatest common divisor of 462 and 1071", "answer": "21"}
+{"id": "tools-12", "name": "seconds", "prompt": "how many seconds are in 3 days and 4 hours", "answer": "273600"}
+{"id": "tools-13", "name": "md5 empty", "prompt": "what are the first 8 hex characters of the md5 of the empty string", "answer": "d41d8cd9"}
+{"id": "tools-14", "name": "linear", "prompt": "solve for x: 3x + 7 = 31", "answer": "8"}
+{"id": "tools-15", "name": "strlen", "prompt": "how many characters are in the word 'anthropomorphic'", "answer": "15"}
+{"id": "tools-16", "name": "vowels", "prompt": "how many vowels (a e i o u) are in 'the quick brown fox jumps over the lazy dog'", "answer": "11"}
+{"id": "tools-17", "name": "json path", "prompt": "given the json {\"a\": {\"b\": [10, 20, 30, 40]}}, what is a.b[2]", "answer": "30"}
+{"id": "tools-18", "name": "factorial digits", "prompt": "how many digits does 30 factorial have", "answer": "33"}
+{"id": "tools-19", "name": "sort", "prompt": "sort these numbers in descending order and give the third one: 42, 7, 99, 23, 61, 8", "answer": "42"}
