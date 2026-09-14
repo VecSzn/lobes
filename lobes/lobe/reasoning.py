@@ -34,9 +34,12 @@ def solve(ctx, state):
 
 
 def _one(ctx, state, *, thinking, temperature):
-    r = ctx.chat(state, "reasoning", [{"role": "system", "content": SYS}, {"role": "user", "content": brief(state)}],
-                 schema=schema, thinking=thinking, temperature=temperature,
+    msgs = [{"role": "system", "content": SYS}, {"role": "user", "content": brief(state)}]
+    r = ctx.chat(state, "reasoning", msgs, schema=schema, thinking=thinking, temperature=temperature,
                  max_tokens=6000 if thinking else 2500)
+    if r.data is None and thinking:
+        # the 9B thinks past 6000 tokens on some SimpleQA items and returns nothing; a plain answer beats none
+        r = ctx.chat(state, "reasoning", msgs, schema=schema, thinking=False, temperature=temperature, max_tokens=2500)
     if r.data is None:
         return Envelope(kind="step_result", goal=state.goal, answer=r.text[:2000],
                         confidence=Confidence(score=0.2, basis="self"), next=Next(action="answer"),
