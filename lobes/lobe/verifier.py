@@ -1,12 +1,14 @@
 """Verifier. Evidence first (code, no model), then a blind re-solve or a generated test. The model never
 sees the candidate answer on qa/math tasks, so it cannot just agree with it. Code hands out PASS, the model only
 gets to veto."""
+import json
 import re
 
 from .. import tools
 from ..schema import ToolCall, Verdict
 from . import brief
 
+ABSTAIN = re.compile(r"don'?t know|do not know|not sure|cannot|could not|can'?t|no (reliable )?information|unknown|unable to", re.I)
 NUM = re.compile(r"-?\d[\d,]*(?:\.\d+)?")
 BLIND_SYS = ("Solve the task yourself from the goal and observations. answer holds only your final answer, nothing "
              "else. check is a short python script that prints the final answer when computing it is possible, "
@@ -47,7 +49,8 @@ def evidence(state):
     for c in state.candidate.claims:
         if c.support != "tool":
             continue
-        blob = blobs.get(c.evidence or "")
+        ref = next((k for k in blobs if k in (c.evidence or "")), None)   # "tool_0 shows ..." still names tool_0
+        blob = blobs.get(ref)
         if blob is None:
             failed.append(c.id)
             notes.append(f"{c.id} cites {c.evidence!r} which is not a tool output")
@@ -101,12 +104,14 @@ def verify(ctx, state):
               "properties": {"answer": {"type": "string"}, "check": {"anyOf": [tools.call_schema(["python"]), {"type": "null"}]}}}
     r = ctx.chat(state, "verifier", [{"role": "system", "content": BLIND_SYS}, {"role": "user", "content": brief(state)}],
                  schema=schema, thinking=False, max_tokens=1500)
-    if r.data is None or not norm(r.data["answer"]):
+    if r.data is None or not norm(r.data["answer"]) or ABSTAIN.search(r.data["answer"]):
         return Verdict(verdict="PASS", basis="evidence" if state.tool_results else "none",
                        notes=f"verifier abstained: {r.text[:100]!r}")
     if same(cand.answer, r.data["answer"]):
         return Verdict(verdict="PASS", basis="consistency", notes=f"blind re-solve agrees: {r.data['answer'][:200]}")
     check = r.data.get("check")
+    if check and r.data["answer"][:40] in json.dumps(check):
+        check = None                # gemma likes print("<its own answer>"), which checks nothing
     if check and not any(v.verdict == "VERIFY_WITH_TOOL" for v in state.verdicts):
         return Verdict(verdict="VERIFY_WITH_TOOL", proposed_check=ToolCall(**check),
                        notes=f"blind re-solve got {r.data['answer'][:200]!r}, checking with a tool")
@@ -120,4 +125,5 @@ if __name__ == "__main__":
     assert not same("42", "43")
     assert same("Paris", "The capital is Paris")
     assert not same("Paris", "Berlin")
+    assert ABSTAIN.search("The page title could not be determined") and not ABSTAIN.search("Example Domain")
     print("verifier ok")

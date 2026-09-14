@@ -2,6 +2,7 @@
 
 一行一条，倒序。写这个是因为过两周我自己都会忘了当时为什么这么选。
 
+- 2026-09-14 the 1.2B executive filed "take a screenshot" and "fetch <url>" as code, and the code path runs the answer as python, so both looped to the 9B and back (150 s, 227 s). Rule now: a tool verb in the goal downgrades the model's "code" to qa, and the code path only runs answers that compile.
 - 2026-09-14 language 的改写要过代码检查：数字集合（去掉 goal 里出现的）必须和草稿一致，草稿 6 个词以内还得原样出现在改写里，否则丢掉改写用草稿。起因是 gemma 把验证过的 97405784 改写成了 97404784，等于最后一步把前面全白干了。
 - 2026-09-14 python 工具在 stdout 为空、代码里没有 print、退出码 0 时，把最后一行当表达式重跑一次打印出来。granite 和 gemma 都爱写 `17 * 23` 然后等结果，空输出会让证据检查卡死在 RETRY。
 - 2026-09-14 升级梯子：无思考 → 开思考 → 3 个 0.7 温度样本投票 → 9B → 远端（yaml 的 remote 槽，没 key 就跳过）。远端那级没 key 没跑过。

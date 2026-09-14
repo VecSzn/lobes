@@ -15,3 +15,6 @@ runs/
 
 # the goal prompt driving the build, not part of the project
 .goal.md
+
+# eval sources, 70 MB, fetched by `lobes eval`
+eval/data/
