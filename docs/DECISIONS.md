@@ -2,6 +2,7 @@
 
 一行一条，倒序。写这个是因为过两周我自己都会忘了当时为什么这么选。
 
+- 2026-09-14 发布内容：仓库只放代码、题目清单、PREREG、REPORT 和 README 的结果表；每题记录（eval/results/*.jsonl）和 trace 不进 git，发布时打包挂 release。参考的是 Open LLM Leaderboard 把 details 放独立数据集、lm-eval-harness 的 log_samples 只推 Hub 不进代码仓库。push 前用 filter-branch 把早先进过历史的 jsonl 清掉。
 - 2026-09-14 v3：high 起加自我反思和一步宽的搜索，medium 不动，所以 v1/v2 的 medium 对比不受影响。反思 = reasoning 拿自己的草稿再看一遍，找一处具体错误；工具打印过的、过了例子的、投票全票一致的草稿不看，改了答案的记进 trace 和 uncertainties。搜索 = verifier 给 width 个候选打分（PASS 带 evidence 3、consistency 2.5、无 2；VERIFY_WITH_TOOL 1；其余 0）留最高分，平分取第一个冷样本；vision 不搜，每个候选已经三路读图。`effort: auto` 从 medium 起，重试用完先升 high 再 xhigh，升完才换大模型：多想一会儿比换模型便宜。没做真的树搜索：单步题的候选没有可展开的公共前缀，多步题的分支是工具调用，回滚工具结果没意义。
 - 2026-09-14 加 effort 档位（low/medium/high/xhigh/max）：想不想、想多少 token、投票抽几个、重试几次、最多几步、要不要升级，全挂在 runner.py 的一张表上，medium 就是原来写死的那组数。入口是 lobes.yaml 的 `effort:`、`lobes ask --effort`、api 的 `reasoning_effort`。5090 上的 v1/v2 对比全在 medium，另跑一组 D 的 high 单独列。
 - 2026-09-14 v2 起点：4070 上 v1 跑到 A、D 全量、E 一半时看了 trace，改动都对着具体失败项，规则写在 eval/PREREG-v2.md，v1 代码打了 tag `v1-4070`，两版都在租的 5090 上重跑才能比。评测结果目录加 `--tag`，一版一个目录。
