@@ -209,6 +209,24 @@ def test_seed_per_call(tmp_path, monkeypatch):
     assert seeds == [7, 8, 9]
 
 
+def test_raw_condition(monkeypatch):
+    """R is the model alone: one call, the judge reads the free text, humaneval takes the fenced block"""
+    from lobes import eval as ev
+    sent = []
+    reply = {"text": "3 apples and 6 pears.\n18"}
+    monkeypatch.setattr(ev.providers, "chat",
+                        lambda p, m, msgs, **kw: (sent.append((msgs, kw)), Reply(reply["text"], None, None, {"total_tokens": 5}, 1, {}))[1])
+    monkeypatch.setattr(models.ModelManager, "ensure", lambda self, name: None)
+    cfg = dict(config.load(), seed=4)
+    vram = type("V", (), {"peak": 0})()
+    rec = ev.run_item(cfg, "R", 4, "gsm8k", {"id": "g1", "prompt": "how many", "gold": "18"}, vram)
+    assert rec["correct"] and rec["calls"] == 1 and rec["swaps"] == 0 and "level" not in rec
+    assert sent[0][0][0]["content"].endswith(ev.RAW_TAIL) and sent[0][1]["seed"] == 4
+    reply["text"] = "Sure:\n```python\ndef add(a, b):\n    return a + b\n```\nthat is all"
+    he = {"id": "h1", "prompt": "add", "entry_point": "add", "source": "def add(a, b):\n", "test": "def check(c):\n    assert c(1, 2) == 3\n"}
+    assert ev.run_item(cfg, "R", 4, "humaneval", he, vram)["correct"]
+
+
 def test_reflect_and_score(tmp_path):
     from lobes.lobe import reasoning
     st = _state("who wrote it", "Alice", "qa")

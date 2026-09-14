@@ -12,8 +12,9 @@ from pathlib import Path
 
 import httpx
 
-from . import config
+from . import config, providers
 from .lobe.verifier import norm, nums, same
+from .models import ModelManager
 from .runner import EFFORT, run
 
 DATA = config.ROOT / "eval" / "data"
@@ -24,6 +25,7 @@ SHUFFLE_SEED = 20260914
 N = {"gsm8k": 30, "humaneval": 30, "tools": 20, "simpleqa": 30, "ocrbench": 20, "multistep": 10}
 SMALL = 0                     # seeds 1 and 2: first SMALL items of every suite except multistep
 CONDITIONS = {                # cfg overrides on top of the profile; see PREREG for what each one is
+    "R":  dict(profile="single-9b", raw=True),      # the 9B as shipped: one chat call, no lobes, no tools
     "A":  dict(profile="single-9b", no_escalate=True),
     "B":  dict(profile="single-4b", no_escalate=True),
     "B3": dict(profile="single-4b", no_escalate=True, vote=3),
@@ -158,6 +160,8 @@ def run_item(cfg, cond, seed, suite, item, vram, tag=""):
     t0 = time.perf_counter()
     rec = {"cond": cond, "seed": seed, "suite": suite, "id": item["id"], "task_id": task_id, "effort": c.get("effort") or "medium"}
     try:
+        if c.get("raw"):
+            return raw_item(c, cond, suite, item, vram, rec)
         st = run(c, item["prompt"], profile=CONDITIONS[cond]["profile"], images=item.get("images"), task_id=task_id)
     except Exception as e:                      # one broken item must not kill the night
         rec.update(error=repr(e)[:500], ms=int((time.perf_counter() - t0) * 1000), correct=False, abstained=False)
@@ -179,6 +183,33 @@ def run_item(cfg, cond, seed, suite, item, vram, tag=""):
                stuck=st.steps >= EFFORT[st.effort]["steps"] and not (last and last.verdict == "PASS"))
     if suite in ("gsm8k", "tools"):             # lenient twin of the strict judge, reported next to it
         rec["gold_in_answer"] = item.get("gold", item.get("answer")).replace(",", "") in nums(st.answer or "")
+    return rec
+
+
+RAW_TAIL = "\n\nEnd your reply with the final answer alone on the last line."
+
+
+def raw_item(cfg, cond, suite, item, vram, rec):
+    """The model on its own: one chat call at the runner's cold-sample temperature and seed, thinking left at the
+    template default, no tools, no images. The judges read free text, so the prompt asks for the answer last."""
+    t0 = time.perf_counter()
+    prov, model = config.lobe(cfg, "reasoning", CONDITIONS[cond]["profile"])
+    mm = ModelManager(cfg)
+    mm.ensure(model)
+    r = providers.chat(cfg["providers"][prov], model, [{"role": "user", "content": item["prompt"] + RAW_TAIL}],
+                       temperature=0.2, max_tokens=12000, seed=cfg.get("seed"))
+    answer = r.text.strip()
+    if suite == "humaneval":
+        blocks = re.findall(r"```\w*\n(.*?)```", answer, re.S)   # the judge runs the answer as code
+        answer = blocks[-1] if blocks else answer
+    correct, abstained = judge(suite, item, answer)
+    rec.update(answer=answer[:1000], correct=correct, abstained=abstained, task_class="raw", tokens=r.usage,
+               ms=int((time.perf_counter() - t0) * 1000), lobe_ms={"raw": r.ms},
+               swaps=sum(op == "load" for _, op, _, _ in mm.events), swap_ms=sum(ms for _, op, ms, _ in mm.events),
+               vram_peak_mb=vram.peak, steps=1, retries=0, escalations=0, calls=1, basis=None, passed=None,
+               stuck=False, finish=r.finish)
+    if suite in ("gsm8k", "tools"):
+        rec["gold_in_answer"] = item.get("gold", item.get("answer")).replace(",", "") in nums(answer)
     return rec
 
 
@@ -222,7 +253,7 @@ def main(cfg, conditions, seeds, quick=False, suites=None, tag=""):
 def report(quick=False, tag=""):
     """Markdown tables from eval/results; the narrative in REPORT.md is written by hand."""
     recs = []
-    for p in sorted((RESULTS / tag).glob(f"{'quick-' if quick else ''}[A-F]*-s*.jsonl")):
+    for p in sorted((RESULTS / tag).glob(f"{'quick-' if quick else ''}[A-Z]*-s*.jsonl")):
         recs += [json.loads(l) for l in p.read_text(encoding="utf-8").splitlines() if l.strip()]
     recs = [r for r in recs if "error" not in r]
     conds = [c for c in CONDITIONS if any(r["cond"] == c for r in recs)]

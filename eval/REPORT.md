@@ -26,6 +26,11 @@ tables. PREREG.md is the contract; this file says what actually happened.
    "three samples and a vote" was one sample. The v1 numbers stand as run. The fix (seed +
    call index, commit 6c2a145) went into both v2 and v3 before their 5090 runs; the 44 v2
    items already run without it were discarded and rerun.
+6. Condition R was added after the 5090 runs started: the 9B as shipped, one chat call per
+   item at the runner's cold-sample temperature and seed, thinking at the template default,
+   12000-token cap, no tools, no images (so no ocrbench). The prompt gets one extra line asking
+   for the answer alone on the last line, since the judges read free text; on humaneval the last
+   fenced block is what gets run. It is the baseline the other conditions should be read against.
 
 ## Quick timing (seed 0-2 mixed, 3 items per suite, not part of the results)
 
