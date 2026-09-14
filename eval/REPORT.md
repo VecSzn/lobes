@@ -39,6 +39,10 @@ tables. PREREG.md is the contract; this file says what actually happened.
    framework and R alike. It went in after v2 A/D/E and after B/C had started, so v2 runs without
    it and v3 and R run with it; the tables count how often it fired, and a v3 D medium run
    (medium is otherwise unchanged from v2) measures its effect on its own.
+8. The v2 A/D/E run died after 248 items, on D s0 simpleqa-1404: the answer carried a U+2028
+   line separator, Python's splitlines() breaks on that, and reading the trace back failed.
+   Fixed by splitting on newlines only; D/E resumed from where they stopped, after B/C, which
+   had started in the meantime.
 
 ## Quick timing (seed 0-2 mixed, 3 items per suite, not part of the results)
 

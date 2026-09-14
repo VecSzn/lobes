@@ -320,3 +320,10 @@ def test_fast_route(tmp_path, monkeypatch):
                         Reply(text="hi there", data=None, reasoning=None, usage={}, ms=1, timings={}))
     state = runner.run(cfg, "hello", profile="specialists")
     assert state.route == "fast" and state.answer == "hi there" and state.steps == 0 and not state.verdicts
+
+
+def test_jsonl_line_separator(tmp_path):
+    from lobes import eval as ev
+    p = tmp_path / "x.jsonl"
+    p.write_text(json.dumps({"a": "one two"}, ensure_ascii=False) + "\n", encoding="utf-8")
+    assert ev.jsonl(p) == [{"a": "one two"}]

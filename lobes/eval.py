@@ -24,6 +24,13 @@ SHUFFLE_SEED = 20260914
 # ~10 h, so the pre-registered cut rule applied: seeds 1-2 multistep only, gsm8k/simpleqa 30, B3 dropped.
 N = {"gsm8k": 30, "humaneval": 30, "tools": 20, "simpleqa": 30, "ocrbench": 20, "multistep": 10}
 SMALL = 0                     # seeds 1 and 2: first SMALL items of every suite except multistep
+
+
+def jsonl(path):
+    # not splitlines(): a U+2028 inside a model's answer counts as a line break there and cuts the record in two
+    return [json.loads(l) for l in path.read_text(encoding="utf-8").split("\n") if l.strip()]
+
+
 CONDITIONS = {                # cfg overrides on top of the profile; see PREREG for what each one is
     "R":  dict(profile="single-9b", raw=True),      # the 9B as shipped: one chat call, no lobes, no tools
     "A":  dict(profile="single-9b", no_escalate=True),
@@ -104,7 +111,7 @@ def load_suite(name):
             it["images"] = [str(img)]
         return chosen
     else:                                       # tools, multistep: mine, small, all of them
-        return [json.loads(l) for l in (config.ROOT / "eval" / "suites" / f"{name}.jsonl").read_text(encoding="utf-8").splitlines() if l.strip()]
+        return jsonl(config.ROOT / "eval" / "suites" / f"{name}.jsonl")
     return _pick(items, name)
 
 
@@ -171,8 +178,7 @@ def run_item(cfg, cond, seed, suite, item, vram, tag=""):
     for lobe, _, ms, _ in st.calls:
         lobe_ms[lobe] = lobe_ms.get(lobe, 0) + ms
     swap_ms = forced = 0
-    for l in (cfg["_root"] / "runs" / task_id / "trace.jsonl").read_text(encoding="utf-8").splitlines():
-        r = json.loads(l)
+    for r in jsonl(cfg["_root"] / "runs" / task_id / "trace.jsonl"):
         if r["kind"] == "model":
             swap_ms += r["ms"]
         forced += r["kind"] == "call" and bool(r.get("forced"))
@@ -239,7 +245,7 @@ def main(cfg, conditions, seeds, quick=False, suites=None, tag=""):
             out = results / f"{'quick-' if quick else ''}{cond}-s{seed}.jsonl"
             done = set()
             if out.exists():
-                done = {(json.loads(l)["suite"], json.loads(l)["id"]) for l in out.read_text(encoding="utf-8").splitlines() if l.strip()}
+                done = {(r["suite"], r["id"]) for r in jsonl(out)}
             for suite, items in plan(cond, seed, quick, suites):
                 for item in items:
                     if (suite, item["id"]) in done:
@@ -255,7 +261,7 @@ def report(quick=False, tag=""):
     """Markdown tables from eval/results; the narrative in REPORT.md is written by hand."""
     recs = []
     for p in sorted((RESULTS / tag).glob(f"{'quick-' if quick else ''}[A-Z]*-s*.jsonl")):
-        recs += [json.loads(l) for l in p.read_text(encoding="utf-8").splitlines() if l.strip()]
+        recs += jsonl(p)
     recs = [r for r in recs if "error" not in r]
     conds = [c for c in CONDITIONS if any(r["cond"] == c for r in recs)]
     out = []
@@ -324,7 +330,7 @@ def _traces(recs, conds):
             if not p.exists():
                 continue
             ok = lambda a: judge(r["suite"], items[(r["suite"], r["id"])], a)[0]   # noqa: E731
-            for t in (json.loads(l) for l in p.read_text(encoding="utf-8").splitlines()):
+            for t in jsonl(p):
                 if t["kind"] == "reflect":
                     rf[0] += 1
                     if t["changed"]:
