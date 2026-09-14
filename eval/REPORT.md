@@ -43,6 +43,14 @@ tables. PREREG.md is the contract; this file says what actually happened.
    line separator, Python's splitlines() breaks on that, and reading the trace back failed.
    Fixed by splitting on newlines only; D/E resumed from where they stopped, after B/C, which
    had started in the meantime.
+9. The rest of the queue was split over two 5090 boxes to finish sooner: the first keeps v2 D/E,
+   v2 high, v3 auto and v3 medium, a second one from the same template (driver 580 instead of
+   570, same llama.cpp build, same model files and item ids) runs R and v3 high. Before the
+   split, R shared the first GPU with the D/E lane for nine minutes: the 22 D s0 items finished
+   22:02-22:11 UTC (12 ocrbench, the 10 multistep) have inflated ms, nothing else about them
+   changes; the 8 R items from that stretch were thrown away and R starts over on the second
+   box. A double launch in the same minutes ran the D/E eval twice for five minutes and recorded
+   ocrbench-610 twice; the second record was dropped.
 
 ## Quick timing (seed 0-2 mixed, 3 items per suite, not part of the results)
 
