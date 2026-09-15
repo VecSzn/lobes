@@ -57,7 +57,18 @@ run part of the protocol rather than an afterthought.
   stopping it at 12 would have thrown away work already paid for. The pilot records stay in
   `eval/results/5090-v4-aime-pilot`; they are a pilot, not one of the v4 runs, and the v4
   numbers come from the runs below with AIME in the suite list like every other suite.
-- **GSM8K (200), HumanEval (30) and OCRBench (50) are unchanged**, prompts, ids and judges.
+- **GSM8K (200), HumanEval (30) and OCRBench (50) are unchanged**, prompts, ids and judges,
+  **and they are not run again either.** Their v3 numbers carry forward the same way SimpleQA's
+  do. The v3 runs and the v4 runs are the same runtime: `git diff aded056 2bb09e1 -- lobes/`
+  is two docstrings in `reasoning.py` and `verifier.py` and nothing else, so a rerun would only
+  draw a second sample of a distribution v3 already sampled twice at medium. Each v4 result
+  file is seeded with the carried records, tagged `carried` with the run they came from, and
+  `lobes eval` skips them by suite and id the way it resumes any interrupted run. What each v4
+  run actually executes is 90 items: tools 50 to 79, multistep 40 to 69, and AIME.
+
+  This was decided after the first v4 launch had already started on all six suites and was
+  stopped 12 minutes in; the aborted partial results are kept as `5090-v4-aborted-fullsuite`
+  and `5090-v4-high-aborted-fullsuite` on the boxes. Nothing was read off them.
 
 Nothing about the runtime changes for these items. No prompt, no lobe, no threshold is
 tuned to any suite; the new items are written against `eval/suites/make.py`, which computes
@@ -104,9 +115,11 @@ again, D high. Four workers, seed 0, one box per condition, `lobes eval` resumin
 id as before.
 
 Frozen 2026-09-15 once the pilot came back: tools 60, multistep 60, gsm8k 200, humaneval 30,
-ocrbench 50, AIME 30, and SimpleQA 30 carried over from v3 without running. The v4 runs are
+ocrbench 50, AIME 30, and SimpleQA 30. Only the 90 new items per run are executed; gsm8k,
+humaneval, ocrbench, SimpleQA and the old halves of tools and multistep carry over. The v4 runs
+are
 
-    lobes eval --conditions D --seeds 0 --workers 4 --suites gsm8k,humaneval,tools,multistep,ocrbench,aime --tag ...
+    lobes eval --conditions D --seeds 0 --workers 4 --suites tools,multistep,aime --tag ...
 
-with `--conditions R` dropping ocrbench, which takes images, and `--effort high` for the high
-run. SimpleQA is in no v4 command.
+with `--effort high` for the high run and `--conditions R` for the 9B alone. SimpleQA is in no
+v4 command.
