@@ -23,19 +23,16 @@ def _run(argv, workdir, shell=False):
 
 
 def _unescape(code):
-    """granite writes newlines as a literal backslash-n inside the json string. If the code as given does not
-    compile and the unescaped one does, run that; the motor lobe never learns the difference."""
-    try:
-        compile(code, "<tool>", "exec")
-        return code
-    except SyntaxError:
-        pass
+    """granite writes newlines as a literal backslash-n inside the json string. Such a one-liner still compiles
+    when a # comment swallows the rest, so without a real newline the unescaped text is tried first."""
     fixed = code.replace("\\n", "\n").replace("\\t", "\t").replace('\\"', '"')
-    try:
-        compile(fixed, "<tool>", "exec")
-        return fixed
-    except SyntaxError:
-        return code
+    for c in ((fixed, code) if "\n" not in code else (code, fixed)):
+        try:
+            compile(c, "<tool>", "exec")
+            return c
+        except SyntaxError:
+            pass
+    return code
 
 
 def python(code: str, workdir: Path):

@@ -1,7 +1,8 @@
 """The loop. Lobes are plain functions; this decides who runs next and writes everything down.
 
 INTAKE -> FAST | LOOK -> WITNESS, WITNESS, ... until enough agree -> ANSWER
-                          code: IMPLEMENT -> examples or a blind test -> retry with the failure attached
+                          the first witness hands back code when the goal wants source:
+                          examples or a blind test -> retry with the failure attached
 
 A witness sees the goal (and the image notes), never another witness. Two agreeing is the answer.
 """
@@ -15,7 +16,7 @@ from .lobe import Witness, agree, settle
 from .models import ModelManager
 from .schema import Verdict
 
-EFFORT = {   # think: thinking on, budget: its token cap, n: witnesses an item may draw, retries: program repairs
+EFFORT = {   # think: thinking on, budget: its token cap, n: thinking samples after the cheap witnesses, retries: program repairs
     #          per witness, then the caps per item: witnesses (steps), model calls, tokens, seconds. None: no cap
     "low":    dict(think=False, budget=0,     n=1,  retries=1, steps=4,  calls=8,  tokens=6000,  seconds=120),
     "medium": dict(think=True,  budget=6000,  n=3,  retries=2, steps=8,  calls=16, tokens=16000, seconds=300),
@@ -58,6 +59,7 @@ class TaskState:
     tool_results: dict = field(default_factory=dict)   # ref -> raw result dict
     witnesses: list = field(default_factory=list)      # Witness, in the order they ran
     value: str | None = None         # the settled value, before the language lobe
+    code: str | None = None          # a program the reasoning lobe delivered instead of values: the goal wants source
     basis: str = "none"              # evidence | consistency | none
     feedback: str = ""               # code: why the last implementation was rejected
     capped: str | None = None        # which cap ended the item, if one did
@@ -167,27 +169,34 @@ def capped(ctx, state):
 
 
 def _plan(ctx, state):
-    """Who derives the answer, in order, as (lobe, callable). The cheap ones go first because the loop stops as
-    soon as enough agree; hot samples of the reasoning lobe fill up to n."""
+    """Who derives the answer, in order, as (lobe, callable). Thinking stays closed until the cheap witnesses
+    disagree: the reasoning lobe plain first (it may hand back code), motor, the verifier; closed book, n plain
+    samples. Only then the reasoning lobe with thinking on, n samples, the loop stopping as soon as enough agree."""
     from .lobe import motor, perception, reasoning
     n = ctx.effort["n"]
-    hot = ("reasoning", lambda: reasoning.witness(ctx, state, temperature=0.7))
+
+    def rw(**kw):
+        return lambda: reasoning.witness(ctx, state, **kw)
+
+    heat = [0.2] + [0.7] * (n - 1)
     if state.task_class == "vision":
-        plan = [("perception", lambda: perception.ask(ctx, state)), ("reasoning", lambda: reasoning.witness(ctx, state))]
+        cheap = [("perception", lambda: perception.ask(ctx, state)), ("reasoning", rw(thinking=False))]
     elif state.needs_tool:
-        plan = [("motor", lambda: motor.witness(ctx, state)), ("reasoning", lambda: reasoning.witness(ctx, state)),
-                ("verifier", lambda: reasoning.witness(ctx, state, lobe="verifier", thinking=False))]
+        cheap = [("reasoning", rw(thinking=False)), ("motor", lambda: motor.witness(ctx, state)),
+                 ("verifier", rw(lobe="verifier", thinking=False))]
     else:
-        plan = [("reasoning", lambda: reasoning.witness(ctx, state))]
-    plan += [hot] * (n - len(plan))
-    return [(lobe, fn) for lobe, fn in plan if ctx.is_model(lobe)]
+        cheap = [("reasoning", rw(thinking=False, temperature=t)) for t in heat]
+    think = [("reasoning", rw(temperature=t)) for t in heat] if ctx.effort["think"] else []
+    return [(lobe, fn) for lobe, fn in cheap + think if ctx.is_model(lobe)]
 
 
 def _need(ctx, state):
-    """Closed-book answers need every sample to agree; anything a program can settle needs two."""
+    """-> (witnesses to count, how many must agree). Anything a program can settle needs two, out of all of
+    them; a closed-book answer needs n samples in a row."""
     if state.task_class == "vision" or state.needs_tool or any(w.ran for w in state.witnesses):
-        return 2
-    return ctx.effort["n"]
+        return state.witnesses, 2
+    n = ctx.effort["n"]
+    return state.witnesses[-n:], n
 
 
 def _witnesses(ctx, state):
@@ -200,11 +209,13 @@ def _witnesses(ctx, state):
             i += 1
             state.steps += 1
             w = make()
+            if state.code:
+                return _code(ctx, state)      # the goal wants source: checked as code, not by agreement
             state.witnesses.append(w)
             ctx.trace.write("witness", lobe=w.lobe, value=(w.value or "")[:500], ran=w.ran, ref=w.ref, note=w.note)
             if state.images and w.value and (ref := verifier.ocr_backed(state, w.value)):
                 state.witnesses.append(Witness("ocr", w.value, ran=True, ref=ref))   # the engine read the same thing
-            hit = settle(state.witnesses, _need(ctx, state), state.goal)
+            hit = settle(*_need(ctx, state), state.goal)
             if hit:
                 break
         if hit or state.capped or not ctx.climb():
@@ -223,20 +234,22 @@ def _witnesses(ctx, state):
         state.value = best.value if best else None
         state.uncertainties = [f"the {w.lobe} lobe got {w.value[:80]!r}" for w in live if w is not best][:3]
         v = Verdict(verdict="CONFLICT", failed_claims=["answer"],
-                    notes=f"no {_need(ctx, state)} of {len(live)} witnesses agree" + (f"; capped by {state.capped}" if state.capped else ""))
+                    notes=f"no {_need(ctx, state)[1]} of {len(live)} witnesses agree" + (f"; capped by {state.capped}" if state.capped else ""))
     state.verdicts.append(v)
     ctx.trace.write("verdict", **v.model_dump())
 
 
 def _code(ctx, state):
-    """Implement, run the task's examples (or a blind test), and re-implement with the failure attached."""
+    """The reasoning lobe delivered a program: run the task's examples (or a blind test), and re-implement with
+    the failure attached."""
     from .lobe import reasoning, verifier
-    code, v = None, Verdict(verdict="CONFLICT", failed_claims=["answer"], notes="no implementation")
-    for _ in range(ctx.effort["retries"] + 1):
+    code, v = state.code, Verdict(verdict="CONFLICT", failed_claims=["answer"], notes="no implementation")
+    for attempt in range(ctx.effort["retries"] + 1):
         if capped(ctx, state):
             break
-        state.steps += 1
-        code = verifier.unfence(reasoning.code(ctx, state).answer)
+        if attempt:
+            state.steps += 1
+            code = verifier.unfence(reasoning.code(ctx, state).answer)
         v = verifier.verify_code(ctx, state, code)
         state.witnesses.append(Witness("reasoning", code, ran=v.basis == "evidence", note=v.notes[:300]))
         ctx.trace.write("verdict", **v.model_dump())
@@ -265,10 +278,7 @@ def run(cfg, goal, *, profile=None, images=None, task_id=None):
         return _finish(ctx, state, language)
     if state.images and ctx.is_model("perception"):
         perception.look(ctx, state)
-    if state.task_class == "code":
-        _code(ctx, state)
-    else:
-        _witnesses(ctx, state)
+    _witnesses(ctx, state)
     return _finish(ctx, state, language)
 
 

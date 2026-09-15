@@ -98,23 +98,25 @@ flowchart LR
 
 ```mermaid
 flowchart TD
-  G(["goal"]) --> E["executive: chat, code, math or a question, and would a program help"]
+  G(["goal"]) --> E["executive: chat or work, and would a program help"]
   E -->|chat| F["executive answers on the spot"] --> L
-  E -->|code| C["reasoning implements it, the task's own examples or a blind test run it, one redo with the failure attached"] --> L
   E -->|image| P["perception describes it and an OCR engine reads it, then perception and reasoning answer"] --> A
-  E -->|a program would help| M["motor: one program from the goal alone, its output is the value"] & R["reasoning: thinks, answers, hands over a program that recomputes it"]
-  E -->|closed book| Q["reasoning answers 3 times (5 at high) without seeing itself"] --> A
-  M & R --> A{"agree? two of them, or all of them when nothing ran"}
-  A -->|no, witnesses left| V["one more: the verifier from another family solves it blind, then further reasoning samples"] --> A
+  E -->|a program would help| R["reasoning, no thinking yet: lists the values asked for, hands over a program that recomputes them one per line"]
+  R -->|the goal wants source| C["that code, run by the task's own examples or a blind test, one redo with the failure attached"] --> L
+  R -->|values| M["motor: one program from the goal alone, its output is the value"] --> A{"agree, value by value? two of them, or all of them when nothing ran"}
+  E -->|closed book| Q["reasoning answers 3 times (5 at high) without seeing itself, no thinking"] --> A
+  A -->|no, witnesses left| V["one more: the verifier from another family solves it blind, then reasoning with thinking on, 3 samples (5 at high)"] --> A
   A -->|yes| L["language: wording only, a code check keeps every number and line"] --> ANS(["answer"])
   A -->|no, witnesses used up| H["reasoning's value, marked not sure"] --> L
 ```
 
 Each witness gets the goal (and, for images, what perception and the OCR engine read,
-labelled) and nothing another witness produced. Two that agree settle it: `evidence`
-when one of them ran a program, `consistency` when neither did; a closed-book answer
-needs every sample to agree. A program that dies gets one repair with its own stderr
-and that is all. `--effort
+labelled) and nothing another witness produced. A value is one line per thing the goal
+asks for, in that order, and two witnesses agree when every line matches (one that
+printed intermediates first only has to match on its tail). Two that agree settle it:
+`evidence` when one of them ran a program, `consistency` when neither did; a
+closed-book answer needs three samples in a row to agree. Thinking stays off until the cheap witnesses
+disagree. A program that dies gets one repair with its own stderr and that is all. `--effort
 low|medium|high|xhigh|max|auto` scales thinking, witness count, repairs and the
 per-item caps; the table is in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 

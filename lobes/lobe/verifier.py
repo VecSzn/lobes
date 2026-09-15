@@ -36,7 +36,7 @@ def same(a, b):
     if na and nb:
         x, y = float(na[-1]), float(nb[-1])
         return abs(x - y) <= 1e-6 * max(1.0, abs(y))
-    a, b = norm(a), norm(b)
+    a, b = norm(a) or (a or "").strip().lower(), norm(b) or (b or "").strip().lower()   # "a" is a value too
     if not a or not b:
         return False
     if a == b or a in b or b in a:
@@ -63,10 +63,10 @@ def ocr_backed(state, text):
     return None
 
 
-def restates(program, answer):
-    """A check that carries its own answer as a literal computes nothing: print(391) backs no 391."""
-    n = nums(answer)
-    return bool(n) and bool(re.search(rf"(?<![\w.]){re.escape(n[-1])}(?![\w.])", program or ""))
+def restates(program, output):
+    """A check that printed its own literal computed nothing: print(391) backs no 391. -1 is not 1."""
+    n = nums(output)
+    return bool(n) and bool(re.search(rf"(?<![\w.-]){re.escape(n[-1])}(?![\w.])", program or ""))
 
 
 def unfence(src):
@@ -161,6 +161,8 @@ if __name__ == "__main__":
     assert ocr_backed(_S, "centre") == "ocr_0" and ocr_backed(_S, "north") is None
     assert restates("print(391)", "391") and restates("x = 1,234\nprint(x)", "1234") is False
     assert not restates("print(17*23)", "391") and not restates("print(3910)", "391") and not restates("print(3.91)", "391")
+    assert not restates("print(s[::-1])", "1") and not restates("pow(3, 100, 1000000)", "522001")
+    assert same("a", "a") and not same("a", "the")
     assert _blame('File "<string>", line 2, in <module>\nNameError', 5) == "candidate"
     assert _blame('File "<string>", line 9, in <module>\nNameError', 5) == "test"
 

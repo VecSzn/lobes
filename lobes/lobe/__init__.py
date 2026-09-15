@@ -1,8 +1,11 @@
 """One module per lobe. Each takes (ctx, state) and returns a Witness or an Envelope; which model answers is
 decided by lobes.yaml, not here."""
+import re
 from dataclasses import dataclass
 
 from .verifier import nums, same
+
+FIELD = re.compile(r"\s*[,;|]\s*|\s+")
 
 
 @dataclass
@@ -26,16 +29,37 @@ def brief(state):
     return "\n".join(lines)
 
 
+def lines(text):
+    return [l.strip() for l in (text or "").splitlines() if l.strip()]
+
+
+def _fields(v, k):
+    """A witness that printed its values on one line, up to the k the other one printed."""
+    if len(v) == 1 and k > 1:
+        toks = [t for t in FIELD.split(v[0]) if t]
+        if 1 < len(toks) <= k:
+            return toks
+    return v
+
+
+def _same(x, y, given):
+    nx = [float(n) for n in nums(x) if n not in given]
+    ny = [float(n) for n in nums(y) if n not in given]
+    if nx and ny:
+        return abs(nx[-1] - ny[-1]) <= 1e-6 * max(1.0, abs(ny[-1]))
+    return same(x, y)
+
+
 def agree(a, b, goal=""):
-    """Two witnesses agree when their last result numbers match, or the sets of them do, else on the text."""
-    if not a or not b:
+    """A value is one line, the asked ones in order and last. Equal counts: every line must match; else the shorter
+    list has to end the longer one (intermediates come first). Numbers given in the goal do not count."""
+    va, vb = lines(a), lines(b)
+    if not va or not vb:
         return False
+    va, vb = _fields(va, len(vb)), _fields(vb, len(va))
+    short, long = sorted((va, vb), key=len)
     given = set(nums(goal))
-    ra = [float(n) for n in nums(a) if n not in given]
-    rb = [float(n) for n in nums(b) if n not in given]
-    if ra and rb:
-        return abs(ra[-1] - rb[-1]) <= 1e-6 * max(1.0, abs(rb[-1])) or set(ra) == set(rb)
-    return same(a, b)
+    return all(_same(x, y, given) for x, y in zip(short, long[len(long) - len(short):]))
 
 
 def settle(witnesses, need, goal):
@@ -45,7 +69,7 @@ def settle(witnesses, need, goal):
     for w in live:
         peers = [o for o in live if o is w or agree(w.value, o.value, goal)]
         if len(peers) >= need:
-            best = max(peers, key=lambda o: (o.ran, len(nums(o.value)), -live.index(o)))
+            best = max(peers, key=lambda o: (o.ran, len(lines(o.value)), -live.index(o)))
             basis = "evidence" if any(o.ran for o in peers) else "consistency" if len(peers) > 1 else "none"
             return best, basis
     return None

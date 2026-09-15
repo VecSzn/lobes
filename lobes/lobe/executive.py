@@ -33,10 +33,10 @@ def intake(ctx, state):
     kind = r.data["kind"] if r.data else "qa"
     if kind == "chat":
         state.task_class, state.route = "chat", "fast"
-    elif kind == "code":
-        state.task_class = "code"
     else:
-        state.needs_tool = kind == "math" or not r.data or r.data["needs_tool"]
+        # code is not a route: the 1B cannot tell "write a program" from "use one", so a program witness runs
+        # and the reasoning lobe hands back source only when the goal wants source
+        state.needs_tool = kind in ("math", "code") or not r.data or r.data["needs_tool"]
 
 
 def fast(ctx, state):

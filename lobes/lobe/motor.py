@@ -6,8 +6,8 @@ from . import Witness, brief
 
 SYS = """You are the motor lobe. Pick ONE tool call that produces the answer to the goal. Tools:
 """ + tools.describe() + """
-Prefer python for anything computable. print() exactly the values the goal asks for, plain, the final one last,
-nothing decorative."""
+Prefer python for anything computable. print() the values the goal asks for, one per line, in the order asked,
+plain, nothing decorative."""
 SCHEMA = {"type": "object", "additionalProperties": False, "required": ["why", "call"],
           "properties": {"why": {"type": "string"}, "call": tools.call_schema()}}
 
