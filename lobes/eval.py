@@ -25,7 +25,7 @@ SHUFFLE_SEED = 20260914
 # v1/v2 ran gsm8k 30, tools 20, ocrbench 20, multistep 10 (PREREG, the cut rule); v3 and then v4 enlarged them.
 # the first items of an enlarged suite are the ones that ran before, the shuffle seed did not change.
 # the last 30 of each (tools-50 up, multi-40 up) are the harder v4 halves, reported apart in PREREG-v4.
-N = {"gsm8k": 200, "humaneval": 30, "tools": 60, "simpleqa": 30, "ocrbench": 50, "multistep": 60}
+N = {"gsm8k": 200, "humaneval": 30, "tools": 60, "simpleqa": 30, "ocrbench": 50, "multistep": 60, "aime": 30}
 SMALL = 0                     # seeds 1 and 2: first SMALL items of every suite except multistep
 
 
@@ -50,6 +50,7 @@ FILES = {
     "humaneval_test.parquet": "https://huggingface.co/datasets/openai/openai_humaneval/resolve/main/openai_humaneval/test-00000-of-00001.parquet",
     "simpleqa_test.csv": "https://openaipublic.blob.core.windows.net/simple-evals/simple_qa_test_set.csv",
     "ocrbench_test.parquet": "https://huggingface.co/datasets/echo840/OCRBench/resolve/main/data/test-00000-of-00001.parquet",
+    "aime_test.parquet": "https://huggingface.co/datasets/yentinglin/aime_2025/resolve/main/data/train-00000-of-00001-243207c6c994e1bd.parquet",
 }
 
 
@@ -96,6 +97,9 @@ def load_suite(name):
         items = [{"id": r.task_id.replace("/", "-"), "prompt": "Complete this python function. Reply with the complete "
                   "function, signature and imports included, no explanation.\n\n" + r.prompt,
                   "source": r.prompt, "test": r.test, "entry_point": r.entry_point} for r in df.itertuples()]
+    elif name == "aime":                        # AIME 2025, both papers; every answer is an integer 0 to 999
+        df = pd.read_parquet(DATA / "aime_test.parquet")
+        items = [{"id": f"aime-{i}", "prompt": p, "gold": str(a)} for i, (p, a) in enumerate(zip(df.problem, df.answer))]
     elif name == "simpleqa":
         df = pd.read_csv(DATA / "simpleqa_test.csv")
         items = [{"id": f"simpleqa-{i}", "prompt": q, "gold": a} for i, (q, a) in enumerate(zip(df.problem, df.answer))]
@@ -119,7 +123,7 @@ def load_suite(name):
 def judge(suite, item, answer):
     """-> (correct, abstained). Judges are fixed in PREREG."""
     answer = answer or ""
-    if suite == "gsm8k":
+    if suite in ("gsm8k", "aime"):
         return same(answer, item["gold"]), False
     if suite == "humaneval":
         code = re.sub(r"^\s*```\w*\n|\n```\s*$", "", answer.rstrip())   # keep the indentation of body-only answers
@@ -194,7 +198,7 @@ def run_item(cfg, cond, seed, suite, item, vram, tag=""):
                witnesses=[(w.lobe, (w.value or "")[:80], w.ran) for w in st.witnesses],
                agreed=sum(agree(st.value, w.value, item["prompt"]) for w in live) if st.value else 0,
                disagree=any(not agree(st.value, w.value, item["prompt"]) for w in live) if st.value else bool(live))
-    if suite in ("gsm8k", "tools"):             # lenient twin of the strict judge, reported next to it
+    if suite in ("gsm8k", "tools", "aime"):     # lenient twin of the strict judge, reported next to it
         rec["gold_in_answer"] = item.get("gold", item.get("answer")).replace(",", "") in nums(st.answer or "")
     return rec
 
@@ -221,7 +225,7 @@ def raw_item(cfg, cond, suite, item, vram, rec):
                swaps=sum(op == "load" for _, op, _, _ in mm.events), swap_ms=sum(ms for _, op, ms, _ in mm.events),
                vram_peak_mb=vram.peak, steps=1, retries=0, calls=1, basis=None, passed=None,
                stuck=False, finish=r.finish, forced=int(r.forced))
-    if suite in ("gsm8k", "tools"):
+    if suite in ("gsm8k", "tools", "aime"):
         rec["gold_in_answer"] = item.get("gold", item.get("answer")).replace(",", "") in nums(answer)
     return rec
 
@@ -319,6 +323,7 @@ def report(quick=False, tag=""):
 
 if __name__ == "__main__":
     assert judge("gsm8k", {"gold": "18"}, "She makes $18")[0] and not judge("gsm8k", {"gold": "18"}, "$18 a day, 9 * 2")[0]
+    assert judge("aime", {"gold": "70"}, "the sum of the bases is 070")[0] and not judge("aime", {"gold": "70"}, "b = 21")[0]
     assert judge("tools", {"answer": "Monday"}, "It is a Monday.")[0] and judge("tools", {"answer": "391"}, "391")[0]
     he = {"entry_point": "add", "source": "def add(a, b):\n", "test": "def check(c):\n    assert c(1, 2) == 3\n"}
     assert judge("humaneval", he, "```python\ndef add(a, b):\n    return a + b\n```")[0] and judge("humaneval", he, "    return a + b\n")[0]
