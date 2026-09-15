@@ -41,10 +41,22 @@ run part of the protocol rather than an afterthought.
   abstention, which is the one place this runtime beats the 9B by a wide margin, so it stays
   in the report. The v3 numbers carry forward verbatim and are labelled as v3 numbers
   everywhere they appear. No v4 run includes it.
-- **AIME added, if a pilot says it is not floored.** 10 to 15 items are run at medium
+- **AIME added, if a pilot says it is not floored.** The set is AIME 2025, both papers, all
+  30 problems, from `yentinglin/aime_2025` on HuggingFace; 2025 rather than 2024 because the
+  2024 paper has been in every training set for two years. 10 to 15 items are run at medium
   before anything is frozen. If this runtime scores 0 on the pilot the suite is dropped and
   that is recorded here as a deviation, because a floored suite is the mistake this round
   exists to fix. The judge is the gsm8k judge: the answer is an integer 0 to 999.
+
+  **The pilot ran on 2026-09-15 and AIME is in.** Medium, four workers, `5090-v4-aime-pilot`:
+  16 of 30 right, 7 of the first 12, so nothing near floored. It is by far the most expensive
+  suite per item, 29,826 tokens and 122 seconds against gsm8k's 5,308 and 24. Every one of the
+  16 right answers had a witness program that ran, and so did 12 of the 14 wrong ones. 17 of
+  the 30 answers were hedged and 4 of those were right anyway. All 30 items ran rather than
+  the 10 to 15 the paragraph above asks for: the run is resumable and item by item, so
+  stopping it at 12 would have thrown away work already paid for. The pilot records stay in
+  `eval/results/5090-v4-aime-pilot`; they are a pilot, not one of the v4 runs, and the v4
+  numbers come from the runs below with AIME in the suite list like every other suite.
 - **GSM8K (200), HumanEval (30) and OCRBench (50) are unchanged**, prompts, ids and judges.
 
 Nothing about the runtime changes for these items. No prompt, no lobe, no threshold is
@@ -87,5 +99,14 @@ is the first medium run.
 ## What is frozen
 
 The item files after `python eval/suites/make.py` is run and the counts assert. The judges,
-unchanged from PREREG-v3. The conditions: R, D medium, D medium again, D high. Four workers,
-seed 0, one box per condition, `lobes eval` resuming by suite and id as before.
+unchanged from PREREG-v3, plus the gsm8k judge on AIME. The conditions: R, D medium, D medium
+again, D high. Four workers, seed 0, one box per condition, `lobes eval` resuming by suite and
+id as before.
+
+Frozen 2026-09-15 once the pilot came back: tools 60, multistep 60, gsm8k 200, humaneval 30,
+ocrbench 50, AIME 30, and SimpleQA 30 carried over from v3 without running. The v4 runs are
+
+    lobes eval --conditions D --seeds 0 --workers 4 --suites gsm8k,humaneval,tools,multistep,ocrbench,aime --tag ...
+
+with `--conditions R` dropping ocrbench, which takes images, and `--effort high` for the high
+run. SimpleQA is in no v4 command.
