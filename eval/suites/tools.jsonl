@@ -28,3 +28,33 @@
 {"id": "tools-47", "name": "days until", "prompt": "how many days from 2026-09-14 until 2027-01-01", "answer": "109"}
 {"id": "tools-48", "name": "mean of squares", "prompt": "what is the mean of the squares of the integers from 1 to 1000", "answer": "333833.5"}
 {"id": "tools-49", "name": "digit count", "prompt": "how many times does the digit 7 appear in the decimal representation of 2 to the power 1000", "answer": "35"}
+{"id": "tools-50", "name": "modinv", "prompt": "what is the modular inverse of 987654321 modulo 1000000007, given as the integer between 0 and 1000000006", "answer": "152057246"}
+{"id": "tools-51", "name": "20000th prime", "prompt": "what is the 20000th prime number, counting 2 as the first", "answer": "224737"}
+{"id": "tools-52", "name": "totient", "prompt": "how many integers from 1 to 1234567890 inclusive are coprime to 1234567890", "answer": "329040288"}
+{"id": "tools-53", "name": "divisor count", "prompt": "how many positive divisors does 123456789000 have", "answer": "192"}
+{"id": "tools-54", "name": "binomial digits", "prompt": "how many digits does the binomial coefficient 200 choose 100 have", "answer": "59"}
+{"id": "tools-55", "name": "catalan", "prompt": "what is catalan(30), where catalan(n) = (2n choose n) divided by (n + 1)", "answer": "3814986502092304"}
+{"id": "tools-56", "name": "lcs", "prompt": "what is the length of the longest common subsequence of these two strings, counting characters including spaces: 'the reasoning lobe hands over a program that recomputes the answer' and 'the motor lobe writes a program from the goal alone and prints the answer'", "answer": "42"}
+{"id": "tools-57", "name": "edit distance", "prompt": "what is the levenshtein edit distance between 'a witness that ran a program beats a witness that wrote a number' and 'two witnesses that agree beat one witness that sounds certain', where one substitution, one insertion or one deletion each cost 1", "answer": "32"}
+{"id": "tools-58", "name": "base64", "prompt": "what is the base64 encoding of the ascii string 'six lobes, one brain, no blackboard'", "answer": "c2l4IGxvYmVzLCBvbmUgYnJhaW4sIG5vIGJsYWNrYm9hcmQ="}
+{"id": "tools-59", "name": "crc32", "prompt": "what is the crc32 checksum of the ascii bytes of 'lobes', as an unsigned decimal integer", "answer": "1668295214"}
+{"id": "tools-60", "name": "sum of primes", "prompt": "what is the sum of all prime numbers below 200000", "answer": "1709600813"}
+{"id": "tools-61", "name": "determinant 5x5", "prompt": "what is the determinant of the 5x5 matrix with rows [[3, 1, 4, 1, 5], [9, 2, 6, 5, 3], [5, 8, 9, 7, 9], [3, 2, 3, 8, 4], [6, 2, 6, 4, 3]]", "answer": "-1813"}
+{"id": "tools-62", "name": "partitions", "prompt": "in how many ways can the integer 60 be written as a sum of positive integers, where order does not matter", "answer": "966467"}
+{"id": "tools-63", "name": "collatz peak", "prompt": "starting from 703 and applying n -> n/2 when n is even and n -> 3n+1 when n is odd, what is the largest value the sequence reaches before it gets to 1", "answer": "250504"}
+{"id": "tools-64", "name": "amicable", "prompt": "what is the sum of all amicable numbers below 20000, where n is amicable if the sum of its proper divisors is some m != n and the sum of the proper divisors of m is n", "answer": "115818"}
+{"id": "tools-65", "name": "bit count range", "prompt": "what is the total number of 1 bits in the binary representations of all the integers from 1 to 100000 inclusive", "answer": "815030"}
+{"id": "tools-66", "name": "overlapping", "prompt": "how many times does 'aba' occur in 'abababababaababababaabababa', counting overlapping occurrences", "answer": "12"}
+{"id": "tools-67", "name": "parse roman", "prompt": "what number is the roman numeral MCMXCIV plus the roman numeral MMCDXLIV, as a decimal", "answer": "4438"}
+{"id": "tools-68", "name": "business days", "prompt": "how many days from 2026-01-01 to 2026-12-31 inclusive fall on a monday, tuesday, wednesday, thursday or friday", "answer": "261"}
+{"id": "tools-69", "name": "digit frequency", "prompt": "how many times does the digit 5 appear in the decimal representation of 3 to the power 1000", "answer": "47"}
+{"id": "tools-70", "name": "prime gap", "prompt": "what is the largest difference between two consecutive prime numbers below 10000", "answer": "36"}
+{"id": "tools-71", "name": "recurrence", "prompt": "define a(1) = 1, a(2) = 1 and a(n) = 3*a(n-1) + 2*a(n-2). what is a(1000) modulo 1000003", "answer": "827326"}
+{"id": "tools-72", "name": "gcd sum", "prompt": "what is the sum of gcd(n, 360) over every integer n from 1 to 360 inclusive", "answer": "3780"}
+{"id": "tools-73", "name": "trailing zeros", "prompt": "how many trailing zeros does 1400 factorial have", "answer": "349"}
+{"id": "tools-74", "name": "isqrt", "prompt": "what are the first 30 digits of the decimal expansion of the square root of 2, written as one integer with no decimal point (so it starts 1414)", "answer": "141421356237309504880168872420"}
+{"id": "tools-75", "name": "factorial digit sum", "prompt": "what is the sum of the digits of 500 factorial", "answer": "4599"}
+{"id": "tools-76", "name": "anagram groups", "prompt": "group these words so that two words are in the same group exactly when one is an anagram of the other: ['listen', 'silent', 'enlist', 'google', 'banana', 'inlets', 'elbow', 'below', 'bowel', 'state', 'taste', 'tates', 'cat', 'act', 'tac', 'night', 'thing', 'stone', 'tones', 'notes', 'onset', 'seton']. how many groups are there", "answer": "8"}
+{"id": "tools-77", "name": "change", "prompt": "in how many ways can 250 be made from coins worth 1, 2, 5, 10, 20, 50, 100 and 200, where order does not matter and any number of each coin may be used", "answer": "200187"}
+{"id": "tools-78", "name": "hamming", "prompt": "take the first 32 hex characters of the sha256 of 'lobes' and the first 32 hex characters of the sha256 of 'brain'. what is the hamming distance between those two 128 bit values, that is, how many bit positions differ", "answer": "75"}
+{"id": "tools-79", "name": "run length", "prompt": "run-length encode 'aaabbbccccdaaeeeeefffffffgg' by writing each character followed by the length of its run, with no separators, so 'aab' becomes 'a2b1'. what is the result", "answer": "a3b3c4d1a2e5f7g2"}

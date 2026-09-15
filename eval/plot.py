@@ -10,8 +10,9 @@ from lobes.eval import jsonl
 
 ROOT = Path(__file__).resolve().parent.parent
 IMG = ROOT / "docs" / "img"
-# items per suite (PREREG-v3); a suite is drawn only once a run has all of them
-N = {"gsm8k": 200, "humaneval": 30, "tools": 30, "multistep": 30, "simpleqa": 30, "ocrbench": 50}
+# items per suite; a suite is drawn only once a run has all of them. tools and multistep grew to 60 in
+# PREREG-v4, so a v3 run at 30 and a v4 run at 60 are both complete.
+N = {"gsm8k": (200,), "humaneval": (30,), "tools": (30, 60), "multistep": (30, 60), "simpleqa": (30,), "ocrbench": (50,)}
 # label, results directory, condition. The 9B has no ocrbench: it takes no images. A missing file is skipped.
 SERIES = [("bare 9B", "5090-v3", "R"),
           ("Lobes, medium", "5090-v3-witness", "D"),
@@ -29,7 +30,7 @@ def done(tag, cond, n):
     """suite -> records, only the suites the run has finished"""
     recs = load(tag, cond)
     out = {s: [r for r in recs if r["suite"] == s] for s in n}
-    return {s: rs for s, rs in out.items() if len(rs) == n[s]}
+    return {s: rs for s, rs in out.items() if len(rs) in n[s]}
 
 
 def acc(rs):

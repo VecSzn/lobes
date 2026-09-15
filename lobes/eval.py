@@ -22,9 +22,10 @@ from .runner import run
 DATA = config.ROOT / "eval" / "data"
 RESULTS = config.ROOT / "eval" / "results"
 SHUFFLE_SEED = 20260914
-# v1/v2 ran gsm8k 30, tools 20, ocrbench 20, multistep 10 (PREREG, the cut rule); PREREG-v3 enlarged them.
+# v1/v2 ran gsm8k 30, tools 20, ocrbench 20, multistep 10 (PREREG, the cut rule); v3 and then v4 enlarged them.
 # the first items of an enlarged suite are the ones that ran before, the shuffle seed did not change.
-N = {"gsm8k": 200, "humaneval": 30, "tools": 30, "simpleqa": 30, "ocrbench": 50, "multistep": 30}
+# the last 30 of each (tools-50 up, multi-40 up) are the harder v4 halves, reported apart in PREREG-v4.
+N = {"gsm8k": 200, "humaneval": 30, "tools": 60, "simpleqa": 30, "ocrbench": 50, "multistep": 60}
 SMALL = 0                     # seeds 1 and 2: first SMALL items of every suite except multistep
 
 
@@ -327,4 +328,9 @@ if __name__ == "__main__":
     assert judge("multistep", {"answers": ["1234", "0642"]}, "1,234 items, ending 0642 (2029)")[0]
     assert not judge("multistep", {"answers": ["1234", "bob"]}, "1,234 items, ann")[0]
     assert not judge("ocrbench", {"gold": ["CENTRE"]}, "center")[0] and judge("ocrbench", {"gold": ["CENTRE"]}, "It says CENTRE")[0]
+    for suite in ("tools", "multistep"):        # a mined item whose own answer fails, or whose blank fails to fail,
+        for it in load_suite(suite):            # is a broken item: a gold that norms to nothing matches everything
+            gold = it["answer"] if suite == "tools" else ", ".join(it["answers"])
+            assert judge(suite, it, gold)[0], it["id"]
+            assert not judge(suite, it, "")[0], it["id"]
     print("eval judges ok")

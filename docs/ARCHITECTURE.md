@@ -123,7 +123,7 @@ Lobes/
 
 问题只有一个：这样拆开，比一个什么都不套的裸 9B 强在哪。基线 R：Qwen3.5-9B 原样一次调用，无工具无脑叶，思考按模板默认，12000 token 上限，撞上限同样强制作答。对手 D：`specialists` 配置，中档和高档。早期还有 A（9B 加同样脚手架）、B（4B 加脚手架）、C（shared），只在 4070 和 5090 早期跑过局部，在 REPORT 附录。
 
-题库：GSM8K 200、HumanEval 30、tools 30、multistep 30（后两个自己出，答案代码算死）、SimpleQA 30、OCRBench 50（裸 9B 不看图，跑 320）。判分全是代码：GSM8K 比最后一个数，HumanEval 跑官方 check()，tools 和 multistep 看期望值在不在答案里，SimpleQA 字符串包含（下界，主要看答了且错的比例），OCRBench 包含。一个种子，每台机四题并行，秒数只在同样并发下可比。每题记对错、token、秒、证人、定案依据、forced、capped。
+题库：GSM8K 200、HumanEval 30、tools 60、multistep 60（后两个自己出，答案代码算死；已发的成绩跑的是前 30 道，后 30 道是 PREREG-v4 加的更难的一半，两半分开报）、SimpleQA 30、OCRBench 50（裸 9B 不看图，跑 320）。判分全是代码：GSM8K 比最后一个数，HumanEval 跑官方 check()，tools 和 multistep 看期望值在不在答案里，SimpleQA 字符串包含（下界，主要看答了且错的比例），OCRBench 包含。一个种子，每台机四题并行，秒数只在同样并发下可比。每题记对错、token、秒、证人、定案依据、forced、capped。
 
 假设和阈值在跑之前写死在 eval/PREREG.md、PREREG-v2.md、PREREG-v3.md，文件冻结，偏离记在 REPORT。结果、逐题读法、证人统计、假设逐条成不成立，全在 eval/REPORT.md；README 只放最终一张表。
 
