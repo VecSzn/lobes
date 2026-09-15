@@ -1,6 +1,6 @@
 #!/bin/sh -e
 # One rented GPU box (RunPod pytorch template, ubuntu 24.04, cuda 12.8), repo already at /workspace/lobes.
-# Builds llama-server, pulls every model, then runs the v1 tag, the v2 branch and v3 (main) into separate result dirs.
+# Builds llama-server, pulls every model, then runs the v1 tag and the v2 branch into separate result dirs, and R from main.
 cd /workspace/lobes
 export PATH=/usr/local/cuda/bin:$PATH
 apt-get update -q && apt-get install -y -q cmake git build-essential
@@ -21,15 +21,20 @@ lobes eval --conditions A,D,E > eval-v1.log 2>&1
 mkdir -p /workspace/5090-v1 && mv eval/results/[ADE]-s*.jsonl /workspace/5090-v1/
 git stash -q && git checkout -q main && git stash pop -q
 mkdir -p eval/results/5090-v1 && mv /workspace/5090-v1/*.jsonl eval/results/5090-v1/
-# v2 is the branch of that name: the v2 commit plus the seed fix (6c2a145) cherry-picked, nothing from v3.
+# v2 is the branch of that name: the v2 commit plus the seed fix (6c2a145) cherry-picked, nothing else from main.
 git stash -q && git checkout -q v2 && git stash pop -q
 lobes eval --conditions A,D,E --tag 5090-v2 > eval-v2.log 2>&1
 lobes eval --conditions B,C --tag 5090-v2 > eval-v2-bc.log 2>&1
 lobes eval --conditions D --seeds 0 --effort high --tag 5090-v2-high > eval-v2-high.log 2>&1
-# main carries the forced answer (3655e67), so R and v3 run with it and v2 without.
-# R, v3 high and v3 medium actually ran on a second box set up by the lines above `git stash` (REPORT, deviation 9).
+# main carries the forced answer (3655e67), so R runs with it and v2 without.
+# R actually ran on a second box set up by the lines above `git stash` (REPORT, deviation 9).
 git stash -q && git checkout -q main && git stash pop -q
 lobes eval --conditions R --tag 5090-v2 > eval-r.log 2>&1      # the 9B alone; same dir so one report shows it next to A-E
+# v3 (PREREG-v3): the enlarged suites, the 9B alone and the pre-v3 medium on box 1, v3 medium then high on box 2.
+# fc7ff7e is the pre-v3 runtime plus the enlarged suites and the new N, so the comparison line reads the same items.
+git checkout -q fc7ff7e
+lobes eval --conditions D --seeds 0 --tag 5090-pre-v3 > eval-pre-v3.log 2>&1
+git checkout -q main
+lobes eval --conditions R --seeds 0 --suites gsm8k humaneval tools simpleqa multistep --tag 5090-v3 > eval-v3-r.log 2>&1
+lobes eval --conditions D --seeds 0 --tag 5090-v3 > eval-v3.log 2>&1                      # box 2 from here
 lobes eval --conditions D --seeds 0 --effort high --tag 5090-v3-high > eval-v3-high.log 2>&1
-lobes eval --conditions D --seeds 0 --effort auto --tag 5090-v3-auto > eval-v3-auto.log 2>&1
-lobes eval --conditions D --seeds 0 --tag 5090-v3 > eval-v3-med.log 2>&1      # medium is v2 medium plus the forced answer

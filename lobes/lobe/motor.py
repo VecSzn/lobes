@@ -1,21 +1,30 @@
-"""Motor: turns the goal into one concrete tool call. The grammar ties tool names to their argument shapes."""
+"""Motor: the first witness on anything computable. It reads the goal alone, picks one tool call, and what the
+tool prints is its value. A failed call gets one repair with its own stderr."""
 from .. import tools
-from ..schema import Envelope, Next, ToolCall
-from . import brief
+from ..schema import ToolCall
+from . import Witness, brief
 
-SYS = """You are the motor lobe. Pick ONE tool call that moves the goal forward. Tools:
+SYS = """You are the motor lobe. Pick ONE tool call that produces the answer to the goal. Tools:
 """ + tools.describe() + """
-Tool output becomes evidence, so print() exactly what will be quoted, plain values, nothing decorative. Prefer
-python for anything computable. Do not repeat a call whose output is already listed."""
+Prefer python for anything computable. print() exactly the values the goal asks for, plain, the final one last,
+nothing decorative."""
+SCHEMA = {"type": "object", "additionalProperties": False, "required": ["why", "call"],
+          "properties": {"why": {"type": "string"}, "call": tools.call_schema()}}
 
 
-def act(ctx, state):
-    schema = {"type": "object", "additionalProperties": False, "required": ["why", "call"],
-              "properties": {"why": {"type": "string"}, "call": tools.call_schema()}}
-    r = ctx.chat(state, "motor", [{"role": "system", "content": SYS}, {"role": "user", "content": brief(state)}],
-                 schema=schema, thinking=False, max_tokens=1500)
-    if r.data is None:
-        return Envelope(kind="step_result", goal=state.goal, next=Next(action="answer"),
-                        uncertainties=["motor returned no usable call"])
-    return Envelope(kind="step_result", goal=state.goal, answer=r.data["why"],
-                    tool_calls=[ToolCall(**r.data["call"])], next=Next(action="tool", module="motor"))
+def witness(ctx, state):
+    from ..runner import run_tool
+    msgs = [{"role": "system", "content": SYS}, {"role": "user", "content": brief(state)}]
+    for attempt in range(2):
+        r = ctx.chat(state, "motor", msgs, schema=SCHEMA, thinking=False, max_tokens=1500)
+        if r.data is None:
+            return Witness("motor", None, note="no usable call")
+        ref, res, out = run_tool(ctx, state, ToolCall(**r.data["call"]))
+        if out:
+            return Witness("motor", out, ran=True, ref=ref)
+        if attempt == 0:
+            state.retries += 1
+            msgs += [{"role": "assistant", "content": r.text},
+                     {"role": "user", "content": f"That call produced no output. exit={res.get('exit')} "
+                                                 f"stderr: {(res.get('stderr') or '')[-800:]}\nFix it and call again."}]
+    return Witness("motor", None, note="the call failed twice")

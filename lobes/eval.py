@@ -14,16 +14,17 @@ from pathlib import Path
 import httpx
 
 from . import config, providers
+from .lobe import agree
 from .lobe.verifier import norm, nums, same
 from .models import ModelManager
-from .runner import EFFORT, run
+from .runner import run
 
 DATA = config.ROOT / "eval" / "data"
 RESULTS = config.ROOT / "eval" / "results"
 SHUFFLE_SEED = 20260914
-# PREREG numbers were gsm8k 50, simpleqa 50, SMALL 10. The quick timing (A 64 s/item, B 24 s/item) projected
-# ~10 h, so the pre-registered cut rule applied: seeds 1-2 multistep only, gsm8k/simpleqa 30, B3 dropped.
-N = {"gsm8k": 30, "humaneval": 30, "tools": 20, "simpleqa": 30, "ocrbench": 20, "multistep": 10}
+# v1/v2 ran gsm8k 30, tools 20, ocrbench 20, multistep 10 (PREREG, the cut rule); PREREG-v3 enlarged them.
+# the first items of an enlarged suite are the ones that ran before, the shuffle seed did not change.
+N = {"gsm8k": 200, "humaneval": 30, "tools": 30, "simpleqa": 30, "ocrbench": 50, "multistep": 30}
 SMALL = 0                     # seeds 1 and 2: first SMALL items of every suite except multistep
 
 
@@ -138,8 +139,9 @@ def judge(suite, item, answer):
         return norm(item["gold"]) in norm(answer), bool(ABSTAIN.search(answer))
     if suite == "ocrbench":
         return any(norm(g) in norm(answer) for g in item["gold"]), False
-    if suite == "multistep":
-        return all(norm(x) in norm(answer) for x in item["answers"]), False
+    if suite == "multistep":   # a number counts wherever it is in the answer (PREREG-v3): the 9B writes "1,234"
+        return all(any(same(n, x) for n in nums(answer)) if re.fullmatch(r"-?[\d.]+", x) else norm(x) in norm(answer)
+                   for x in item["answers"]), False
     raise KeyError(suite)
 
 
@@ -184,11 +186,15 @@ def run_item(cfg, cond, seed, suite, item, vram, tag=""):
             swap_ms += r["ms"]
         forced += r["kind"] == "call" and bool(r.get("forced"))
     last = st.verdicts[-1] if st.verdicts else None
+    live = [w for w in st.witnesses if w.value]
     rec.update(answer=(st.answer or "")[:1000], correct=correct, abstained=abstained, task_class=st.task_class,
                tokens=st.usage, ms=st.ms(), lobe_ms=lobe_ms, swaps=st.swaps, swap_ms=swap_ms, vram_peak_mb=vram.peak,
                steps=st.steps, retries=st.retries, escalations=st.escalations, calls=len(st.calls),
-               basis=last.basis if last else None, passed=bool(last and last.verdict == "PASS"), level=st.effort,
-               stuck=st.steps >= EFFORT[st.effort]["steps"] and not (last and last.verdict == "PASS"), forced=forced)
+               basis=st.basis, passed=bool(last and last.verdict == "PASS"), level=st.effort,
+               stuck=bool(st.capped), capped=st.capped, forced=forced,
+               witnesses=[(w.lobe, (w.value or "")[:80], w.ran) for w in st.witnesses],
+               agreed=sum(agree(st.value, w.value, item["prompt"]) for w in live) if st.value else 0,
+               disagree=any(not agree(st.value, w.value, item["prompt"]) for w in live) if st.value else bool(live))
     if suite in ("gsm8k", "tools"):             # lenient twin of the strict judge, reported next to it
         rec["gold_in_answer"] = item.get("gold", item.get("answer")).replace(",", "") in nums(st.answer or "")
     return rec
@@ -290,7 +296,9 @@ def report(quick=False, tag=""):
     table("mean tokens", tok)
     table("mean seconds", sec)
     table("mean swaps", lambda rs: statistics.mean(r["swaps"] for r in rs))
-    table("stuck loop %", lambda rs: 100 * sum(r["stuck"] for r in rs) / len(rs))
+    table("stuck % (v1/v2: step cap with no PASS; v3: any per-item cap hit)", lambda rs: 100 * sum(r["stuck"] for r in rs) / len(rs))
+    table("witness disagreement % (v3: some witness's value differs from the answer)",
+          lambda rs: 100 * sum(bool(r.get("disagree")) for r in rs) / len(rs))
     table("items with a forced answer % (thinking hit its cap, answered from the partial reasoning)",
           lambda rs: 100 * sum(bool(r.get("forced")) for r in rs) / len(rs))
     table("VRAM peak MB (max over items, includes the desktop)", lambda rs: max(r["vram_peak_mb"] for r in rs))
@@ -316,41 +324,7 @@ def report(quick=False, tag=""):
     for s in N:
         rs = [r for r in recs if r["cond"] == "E" and r["suite"] == s and r["seed"] == 0 and r.get("escalations")]
         out.append(f"| {s} | {len(rs)} | {sum(r['correct'] for r in rs)} |")
-    if any("level" in r for r in recs):
-        out += _traces(recs, conds)
     return "\n".join(out)
-
-
-def _traces(recs, conds):
-    """v3 rows read from the traces: which level the answer came from, and whether reflection and search fixed more
-    candidates than they broke. Judged per change on the candidate answers, not on the final answer."""
-    items = {(s, it["id"]): it for s in N for it in load_suite(s)}
-    out = ["\n### v3 from traces (seed 0): level the answer came from; reflection and search changes\n\n"
-           "| cond | medium | high | xhigh | reflect asked / changed / fixed / broke | search steps / not first / fixed / broke |\n"
-           "|---|---|---|---|---|---|"]
-    for c in conds:
-        lv, rf, se = {}, [0, 0, 0, 0], [0, 0, 0, 0]
-        for r in (r for r in recs if r["cond"] == c and r["seed"] == 0 and "level" in r):
-            lv[r["level"]] = lv.get(r["level"], 0) + 1
-            p = config.ROOT / "runs" / r["task_id"] / "trace.jsonl"
-            if not p.exists():
-                continue
-            ok = lambda a: judge(r["suite"], items[(r["suite"], r["id"])], a)[0]   # noqa: E731
-            for t in jsonl(p):
-                if t["kind"] == "reflect":
-                    rf[0] += 1
-                    if t["changed"]:
-                        b, a = ok(t["before"]), ok(t["answer"])
-                        rf[1] += 1; rf[2] += a and not b; rf[3] += b and not a
-                elif t["kind"] == "search":
-                    i = t["scores"].index(max(t["scores"]))
-                    se[0] += 1
-                    if i:
-                        b, a = ok(t["answers"][0]), ok(t["answers"][i])
-                        se[1] += 1; se[2] += a and not b; se[3] += b and not a
-        out.append(f"| {c} | " + " | ".join(str(lv.get(l, 0)) for l in ("medium", "high", "xhigh")) +
-                   f" | {' / '.join(map(str, rf))} | {' / '.join(map(str, se))} |")
-    return out
 
 
 if __name__ == "__main__":
@@ -361,5 +335,7 @@ if __name__ == "__main__":
     assert not judge("humaneval", he, "def add(a, b):\n    return a - b")[0]
     assert judge("simpleqa", {"gold": "Michio Sugeno"}, "I don't know, maybe Michio Sugeno.") == (True, True)
     assert judge("multistep", {"answers": ["210", "bob"]}, "sum is 210, best is Bob")[0]
+    assert judge("multistep", {"answers": ["1234", "0642"]}, "1,234 items, ending 0642 (2029)")[0]
+    assert not judge("multistep", {"answers": ["1234", "bob"]}, "1,234 items, ann")[0]
     assert not judge("ocrbench", {"gold": ["CENTRE"]}, "center")[0] and judge("ocrbench", {"gold": ["CENTRE"]}, "It says CENTRE")[0]
     print("eval judges ok")

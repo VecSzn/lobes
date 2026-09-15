@@ -44,6 +44,8 @@
 
 验证器不能单独给 PASS。PASS 必须有证据（执行通过、盲解一致、工具比对通过）。验证器只有否决权：RETRY、CONFLICT、VERIFY_WITH_TOOL。弱模型的否决很便宜，它的赞同一文不值，那就设计成赞同不重要。
 
+（v3 更正：上面三段是 v1/v2 的做法。5090 的 trace 说明「盲解」其实不盲：验证器看不到候选答案，但看得到执行叶的计划和按计划跑出的工具输出，答案就从那里回声回来；断言表也没人真的审。v3 把这一节换成一条规则：几个互相看不见的推导一致才算答案。motor 叶从题面写一个程序、推理叶思考后交一个复算程序、验证器（gemma，另一个家族）在前两个不一致时盲解第三次，程序打印的就是该证人的值，两个一致即定案。验证器只剩代码题的例子检查和盲测试，没有 RETRY / VERIFY_WITH_TOOL 循环。见 eval/PREREG-v3.md。）
+
 最后是校准。评测的时候记下每类任务上验证器的精确率和召回率，哪类任务上它不比抛硬币强就关掉。这其实就是整个项目要验证的假设的一部分。
 
 后面（V3）可以换个家族做裁判，gemma-4 或者 LFM2.5，跟 Qwen 的错误相关性低一些。
@@ -82,7 +84,7 @@
 }
 ```
 
-kind 是 plan / step_result / tool_result / verdict / final 之一，next.action 是 tool / verify / answer / retry / escalate 之一。验证器的输出更短：
+kind 是 plan / step_result / tool_result / verdict / final 之一，next.action 是 tool / verify / answer / retry / escalate 之一。验证器的输出更短（v3 起 kind 只剩 step_result / final，next.action 只剩 tool / answer，claims 删了；证人之间传的是 Witness(lobe, value, ran, ref)，不是信封）：
 
 ```json
 {"verdict": "RETRY", "failed_claims": ["c2"],
@@ -187,7 +189,7 @@ key 只放 .env，不进 git。`lobes providers test` 挨个打一下看通不�
 
 模型管理器就是一张表：name、file、vram_est、resident、loaded、last_used。`ensure(name)`：没加载就按 LRU 卸非常驻的直到预算够，然后 `/models/load`，轮询到就绪。加载完读一次 nvidia-smi 把 vram_est 校准掉。
 
-路由器是个纯函数 `route(state)`，状态机：INTAKE → FAST 或 PLAN → ACT → TOOL → VERIFY → 回答 / 重试回 ACT / 再跑工具 / 升级后回 ACT。最多 8 步、2 次重试、1 次升级。
+路由器是个纯函数 `route(state)`，状态机：INTAKE → FAST 或 PLAN → ACT → TOOL → VERIFY → 回答 / 重试回 ACT / 再跑工具 / 升级后回 ACT。最多 8 步、2 次重试、1 次升级。（v3：INTAKE → FAST 或 LOOK → 证人逐个跑到两个一致 → 回答；代码题是实现 → 例子/盲测试 → 带失败原因重做。没有重试回路，单题有证人数、调用数、token、秒四个硬上限，见 runner.py 的 EFFORT 表。）
 
 没有消息总线。单进程函数调用传信封，每个信封追加写到 `runs/<task_id>/trace.jsonl`。多进程总线现在是过早设计。
 
@@ -251,6 +253,10 @@ V3：按显存预算的 LRU 和预测性预加载，异家族裁判，CPU 上跑
                verifier（gemma，证据检查 + 盲解）→ PASS / RETRY / VERIFY_WITH_TOOL / CONFLICT
                language（gemma，把信封写成人话；shared 下是 passthrough）
                CONFLICT → 换入 9B 或远端 API
+v3 的同一张图：executive 只分流不写计划；能算的题 motor（从题面写一个程序）→ reasoning（思考 + 复算程序）
+两个一致就定案，不一致 verifier（gemma）盲解第三次，再不一致抽推理叶热样本到档位上限，梯子开着时 9B / 远端
+各多当一个证人；图片题 perception 直接答 + OCR 文本包含 + reasoning 读描述作答；闭卷题推理叶采样全体一致。
+证人只看题面（和带来源的图片观察），看不到彼此。
 模型管理器按显存预算 LRU 换入换出，每次换都记时间和 nvidia-smi
 ```
 

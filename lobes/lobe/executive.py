@@ -1,8 +1,8 @@
-"""Executive: picks the route with rules, and if a model is configured, classifies the rest and writes the plan."""
+"""Executive: picks the route with rules, and if a model is configured, classifies the rest. It writes no plan:
+a plan in the shared view made the 1.2B's reading of the task everyone's premise (PREREG-v3)."""
 import re
 
 from ..schema import Confidence, Envelope, Next
-from . import brief
 
 GREET = re.compile(r"^\W*(hi|hello|hey|yo|thanks|thank you|good (morning|afternoon|evening|night)|how are you"
                    r"|what'?s up|你好|您好|嗨|哈喽|谢谢|早|早上好|晚安|在吗)\b", re.I)
@@ -15,15 +15,9 @@ TOOLY = re.compile(r"\b(run|execute|read|open|check|test|verify|benchmark|screen
 
 CLASS_SCHEMA = {"type": "object", "additionalProperties": False, "required": ["kind", "needs_tool"],
                 "properties": {"kind": {"enum": ["chat", "math", "code", "qa"]}, "needs_tool": {"type": "boolean"}}}
-PLAN_SCHEMA = {"type": "object", "additionalProperties": False, "required": ["steps", "first"],
-               "properties": {"steps": {"type": "array", "items": {"type": "string"}, "minItems": 1, "maxItems": 4},
-                              "first": {"enum": ["tool", "reason"]}}}
-
 CLASS_SYS = ("Classify the user's message. chat = greeting or small talk that needs no facts. math = numbers to "
              "compute. code = they want code written. qa = anything else. needs_tool = running python would help "
              "answer correctly.")
-PLAN_SYS = ("You are the executive lobe of a small assistant. Write 1-4 short steps to reach the goal, then say "
-            "whether to start with a tool (python) or with reasoning.")
 FAST_SYS = "You are Lobes, a local assistant. Reply in one or two sentences, in the user's language."
 
 
@@ -50,20 +44,6 @@ def intake(ctx, state):
                 return
     if TOOLY.search(g):
         state.needs_tool = True
-
-
-def plan(ctx, state):
-    steps, first = ["solve", "verify"], "tool" if state.needs_tool else "reason"
-    if ctx.is_model("executive"):
-        r = ctx.chat(state, "executive", [{"role": "system", "content": PLAN_SYS}, {"role": "user", "content": brief(state)}],
-                     schema=PLAN_SCHEMA, thinking=False, max_tokens=200)
-        if r.data:
-            steps = r.data["steps"]
-            if not state.needs_tool:            # rules win when they were sure
-                first = r.data["first"]
-    return Envelope(kind="plan", goal=state.goal, answer="; ".join(steps),
-                    next=Next(action="tool" if first == "tool" else "answer",
-                              module="motor" if first == "tool" else "reasoning"))
 
 
 def fast(ctx, state):

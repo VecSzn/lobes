@@ -2,8 +2,9 @@
 
 一行一条，倒序。写这个是因为过两周我自己都会忘了当时为什么这么选。
 
+- 2026-09-14 v3：共享黑板换成证人。5090 的 trace 里 gsm8k 1252/413、multi-03/06/08 都是同一条路：执行叶（1.2B）的计划文本和照它跑出的工具输出摆给了所有叶，验证器"盲解"看得见这些就回声，答案又在每叶重新生成成自由文本丢值。现在每个证人只拿题面（图片题加带来源的描述和 OCR 行），motor 从题面写程序、推理叶思考后交复算程序、程序打印的就是该证人的值，两个一致定案（有程序跑过是 evidence，没有是 consistency）；不一致才叫第三个证人，故意选另一个家族（gemma）而不是推理叶再抽一次，错误相关性低。没有 RETRY / VERIFY_WITH_TOOL / CONFLICT 循环，程序挂了只带 stderr 修一次；定下的值原样携带到语言叶，改写丢了数字或一行就丢改写。单题硬上限：证人数、调用数、token、秒，撞上就带 hedge 交卷。梯子开着时 9B / 远端是多一个证人，不是接管。规则先写在 eval/PREREG-v3.md 再动的代码。
 - 2026-09-14 发布内容：仓库只放代码、题目清单、PREREG、REPORT 和 README 的结果表；每题记录（eval/results/*.jsonl）和 trace 不进 git，发布时打包挂 release。参考的是 Open LLM Leaderboard 把 details 放独立数据集、lm-eval-harness 的 log_samples 只推 Hub 不进代码仓库。push 前用 filter-branch 把早先进过历史的 jsonl 清掉。
-- 2026-09-14 v3：high 起加自我反思和一步宽的搜索，medium 不动，所以 v1/v2 的 medium 对比不受影响。反思 = reasoning 拿自己的草稿再看一遍，找一处具体错误；工具打印过的、过了例子的、投票全票一致的草稿不看，改了答案的记进 trace 和 uncertainties。搜索 = verifier 给 width 个候选打分（PASS 带 evidence 3、consistency 2.5、无 2；VERIFY_WITH_TOOL 1；其余 0）留最高分，平分取第一个冷样本；vision 不搜，每个候选已经三路读图。`effort: auto` 从 medium 起，重试用完先升 high 再 xhigh，升完才换大模型：多想一会儿比换模型便宜。没做真的树搜索：单步题的候选没有可展开的公共前缀，多步题的分支是工具调用，回滚工具结果没意义。
+- 2026-09-14 `effort: auto` 从 medium 起，重试用完先升 high 再 xhigh，升完才换大模型：多想一会儿比换模型便宜。
 - 2026-09-14 加 effort 档位（low/medium/high/xhigh/max）：想不想、想多少 token、投票抽几个、重试几次、最多几步、要不要升级，全挂在 runner.py 的一张表上，medium 就是原来写死的那组数。入口是 lobes.yaml 的 `effort:`、`lobes ask --effort`、api 的 `reasoning_effort`。5090 上的 v1/v2 对比全在 medium，另跑一组 D 的 high 单独列。
 - 2026-09-14 v2 起点：4070 上 v1 跑到 A、D 全量、E 一半时看了 trace，改动都对着具体失败项，规则写在 eval/PREREG-v2.md，v1 代码打了 tag `v1-4070`，两版都在租的 5090 上重跑才能比。评测结果目录加 `--tag`，一版一个目录。
 - 2026-09-14 SimpleQA 改成有话直说：最终没过验证、或 PASS 但 basis 是 none 的答案，language 前面加 "Not sure. Best guess: "。v1 的弃权正则本来就抓 "not sure"，所以判分代码不动，报表多一列"答了且对"（correct 且没弃权）。v1 里 D 的 SimpleQA 弃权 0%、答了且错 63%，verifier 那条盲解在闭卷常识题上就是两个小模型互相猜，没意义。

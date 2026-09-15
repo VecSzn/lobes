@@ -1,6 +1,6 @@
 """Perception: turns images into observations the text-only lobes can use. Two readers: the vision model
 describes and transcribes, and an ocr engine (code, optional) transcribes on its own; they land as separate
-observations and the reasoning lobe reconciles them."""
+observations, each labelled with its source."""
 import json
 
 from ..schema import Observation
@@ -51,9 +51,9 @@ def look(ctx, state, images=None):
 
 
 def ask(ctx, state):
-    """A second look that answers the question directly instead of describing; the verifier compares it."""
+    """The perception witness: answers the question from the image directly. Not written to the observations,
+    so the reasoning witness reads the description and the ocr lines without knowing this answer."""
+    from . import Witness
     r = ctx.chat(state, "perception", [{"role": "user", "content": f"Look at the image and answer with only the answer, nothing else: {state.goal}"}],
                  schema=ANSWER, images=state.images, thinking=False, max_tokens=300)
-    answer = (r.data or {}).get("answer", r.text).strip()
-    state.observations.append(Observation(source="lobe:perception", ref="second_look", summary=f"Second look, answering the question directly: {answer}"))
-    return answer
+    return Witness("perception", (r.data or {}).get("answer", r.text).strip() or None)

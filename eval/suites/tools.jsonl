@@ -1,20 +1,30 @@
-{"id": "tools-00", "name": "days between", "prompt": "how many days are there between 2024-02-10 and 2026-09-14", "answer": "947"}
-{"id": "tools-01", "name": "sha256 prefix", "prompt": "what are the first 8 hex characters of the sha256 of the string 'lobes'", "answer": "20515122"}
-{"id": "tools-02", "name": "2**100 mod 997", "prompt": "what is 2 to the power 100 modulo 997", "answer": "907"}
-{"id": "tools-03", "name": "fib 50", "prompt": "what is the 50th fibonacci number, counting fib(1) = fib(2) = 1", "answer": "12586269025"}
-{"id": "tools-04", "name": "primes below 1000", "prompt": "how many prime numbers are there below 1000", "answer": "168"}
-{"id": "tools-05", "name": "hex to dec", "prompt": "convert the hexadecimal number 0x1F3A to decimal", "answer": "7994"}
-{"id": "tools-06", "name": "weekday", "prompt": "what day of the week is 2026-09-14", "answer": "Monday"}
-{"id": "tools-07", "name": "digit sum", "prompt": "what is the sum of the digits of 987654321", "answer": "45"}
-{"id": "tools-08", "name": "base 7", "prompt": "write 12345 in base 7", "answer": "50664"}
-{"id": "tools-09", "name": "reverse", "prompt": "reverse the string 'modular brain' character by character", "answer": "niarb raludom"}
-{"id": "tools-10", "name": "mean", "prompt": "what is the mean of 3, 7, 8, 15 and 22, to one decimal place", "answer": "11.0"}
-{"id": "tools-11", "name": "gcd", "prompt": "what is the greatest common divisor of 462 and 1071", "answer": "21"}
-{"id": "tools-12", "name": "seconds", "prompt": "how many seconds are in 3 days and 4 hours", "answer": "273600"}
-{"id": "tools-13", "name": "md5 empty", "prompt": "what are the first 8 hex characters of the md5 of the empty string", "answer": "d41d8cd9"}
-{"id": "tools-14", "name": "linear", "prompt": "solve for x: 3x + 7 = 31", "answer": "8"}
-{"id": "tools-15", "name": "strlen", "prompt": "how many characters are in the word 'anthropomorphic'", "answer": "15"}
-{"id": "tools-16", "name": "vowels", "prompt": "how many vowels (a e i o u) are in 'the quick brown fox jumps over the lazy dog'", "answer": "11"}
-{"id": "tools-17", "name": "json path", "prompt": "given the json {\"a\": {\"b\": [10, 20, 30, 40]}}, what is a.b[2]", "answer": "30"}
-{"id": "tools-18", "name": "factorial digits", "prompt": "how many digits does 30 factorial have", "answer": "33"}
-{"id": "tools-19", "name": "sort", "prompt": "sort these numbers in descending order and give the third one: 42, 7, 99, 23, 61, 8", "answer": "42"}
+{"id": "tools-20", "name": "days between", "prompt": "how many days are there between 1969-07-20 and 2026-09-14", "answer": "20875"}
+{"id": "tools-21", "name": "sha256 prefix", "prompt": "what are the first 10 hex characters of the sha256 of the string 'six lobes, one brain'", "answer": "aa519e5e47"}
+{"id": "tools-22", "name": "7^222 mod 1000", "prompt": "what is 7 to the power 222 modulo 1000", "answer": "49"}
+{"id": "tools-23", "name": "fib 90", "prompt": "what is the 90th fibonacci number, counting fib(1) = fib(2) = 1", "answer": "2880067194370816120"}
+{"id": "tools-24", "name": "primes in range", "prompt": "how many prime numbers are there between 10000 and 20000", "answer": "1033"}
+{"id": "tools-25", "name": "hex to dec", "prompt": "convert the hexadecimal number 0xDEADBEEF to decimal", "answer": "3735928559"}
+{"id": "tools-26", "name": "weekday", "prompt": "what day of the week was 2000-02-29", "answer": "Tuesday"}
+{"id": "tools-27", "name": "digit sum", "prompt": "what is the sum of the digits of 2 to the power 100", "answer": "115"}
+{"id": "tools-28", "name": "base 7", "prompt": "write 100000 in base 7", "answer": "564355"}
+{"id": "tools-29", "name": "reverse words", "prompt": "reverse the order of the words in 'the quick brown fox jumps over the lazy dog'", "answer": "dog lazy the over jumps fox brown quick the"}
+{"id": "tools-30", "name": "pstdev", "prompt": "what is the population standard deviation of 4, 8, 15, 16, 23 and 42, to two decimals", "answer": "12.32"}
+{"id": "tools-31", "name": "lcm", "prompt": "what is the least common multiple of 12, 18, 30, 45 and 70", "answer": "1260"}
+{"id": "tools-32", "name": "400 years", "prompt": "how many seconds are there in one full 400 year cycle of the gregorian calendar", "answer": "12622780800"}
+{"id": "tools-33", "name": "md5 prefix", "prompt": "what are the first 8 hex characters of the md5 of the string 'lobes'", "answer": "fe8c3178"}
+{"id": "tools-34", "name": "linear", "prompt": "solve for x: 5x - 3 = 2x + 21", "answer": "8"}
+{"id": "tools-35", "name": "strlen", "prompt": "how many characters are in the word 'pneumonoultramicroscopicsilicovolcanoconiosis'", "answer": "45"}
+{"id": "tools-36", "name": "count s", "prompt": "how many times does the letter s appear in 'she sells sea shells by the sea shore, surely she does'", "answer": "11"}
+{"id": "tools-37", "name": "json sum", "prompt": "given the json {\"a\": [{\"b\": {\"c\": [1, 2, 3]}}, {\"b\": {\"c\": [4, 5, 6]}}, {\"b\": {\"c\": [7, 8]}}]}, what is the sum of every number under a key named c", "answer": "36"}
+{"id": "tools-38", "name": "factorial digits", "prompt": "how many digits does 100 factorial have", "answer": "158"}
+{"id": "tools-39", "name": "sort", "prompt": "sort these numbers in descending order and give the fifth one: 42, 7, 99, 23, 61, 8, 77, 15, 88", "answer": "42"}
+{"id": "tools-40", "name": "3^100 mod", "prompt": "what is 3 to the power 100 modulo 1000000", "answer": "522001"}
+{"id": "tools-41", "name": "iso week", "prompt": "what iso week number does 2026-12-31 fall in", "answer": "53"}
+{"id": "tools-42", "name": "trailing zeros", "prompt": "how many trailing zeros does 250 factorial have", "answer": "62"}
+{"id": "tools-43", "name": "popcount", "prompt": "how many 1 bits are in the binary representation of 123456789", "answer": "16"}
+{"id": "tools-44", "name": "caesar", "prompt": "shift every letter of 'lobes' forward by 7 places in the alphabet (wrapping around)", "answer": "svilz"}
+{"id": "tools-45", "name": "gcd3", "prompt": "what is the greatest common divisor of 1071, 462 and 1197", "answer": "21"}
+{"id": "tools-46", "name": "hours", "prompt": "how many hours are there from 2026-01-01 00:00 to 2026-09-14 15:30", "answer": "6159.5"}
+{"id": "tools-47", "name": "days until", "prompt": "how many days from 2026-09-14 until 2027-01-01", "answer": "109"}
+{"id": "tools-48", "name": "mean of squares", "prompt": "what is the mean of the squares of the integers from 1 to 1000", "answer": "333833.5"}
+{"id": "tools-49", "name": "digit count", "prompt": "how many times does the digit 7 appear in the decimal representation of 2 to the power 1000", "answer": "35"}
