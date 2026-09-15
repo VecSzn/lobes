@@ -48,7 +48,7 @@ def _image_part(path):
 
 
 def chat(provider, model, messages, *, schema=None, images=None, thinking=None,
-         temperature=0.2, max_tokens=2048, seed=None, timeout=600.0):
+         temperature=0.2, max_tokens=2048, seed=None, timeout=600.0, ctx=None):
     messages = [dict(m) for m in messages]
     if images:
         last = messages[-1]
@@ -80,6 +80,12 @@ def chat(provider, model, messages, *, schema=None, images=None, thinking=None,
     if j["choices"][0].get("finish_reason") == "length" and reasoning and not msg.get("content") and not provider.get("api_key"):
         # thinking ate the whole cap. llama-server prefills a trailing assistant turn, and the chat template only
         # closes the think block when content is non-empty, so the model answers from what it thought so far.
+        if ctx:
+            # the re-send carries the reasoning as prompt; cut it so prompt + reasoning + answer fit the context
+            room = ctx - usage.get("prompt_tokens", 0) - 2600
+            got = usage.get("completion_tokens") or 1
+            if room < got:
+                reasoning = reasoning[: max(0, len(reasoning) * room // got)]
         body["messages"] = messages + [{"role": "assistant", "reasoning_content": reasoning + "\n\n" + BUDGET_MSG,
                                         "content": "{" if schema is not None else " "}]
         body["max_tokens"] = 2500
