@@ -83,7 +83,12 @@ def chat(provider, model, messages, *, schema=None, images=None, thinking=None,
         body["messages"] = messages + [{"role": "assistant", "reasoning_content": reasoning + "\n\n" + BUDGET_MSG,
                                         "content": "{" if schema is not None else " "}]
         body["max_tokens"] = 2500
-        j = _post(provider, body, headers, timeout)
+        try:
+            j = _post(provider, body, headers, timeout)
+        except httpx.HTTPStatusError:
+            # gemma4's template folds the prefilled reasoning into the grammar and llama-server then rejects it (400)
+            body.pop("response_format", None)
+            j = _post(provider, body, headers, timeout)
         msg = j["choices"][0]["message"]
         usage = {k: usage.get(k, 0) + j.get("usage", {}).get(k, 0) for k in ("prompt_tokens", "completion_tokens", "total_tokens")}
         forced = True
