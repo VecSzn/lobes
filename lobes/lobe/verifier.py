@@ -190,14 +190,6 @@ def verify(ctx, state):
                    notes=f"blind re-solve got a different answer: {blind[:300]}")
 
 
-def score(v):
-    """A verdict as a number for the runner's search: a PASS on evidence beats one on agreement beats one on
-    nothing, and a check still to run beats a rejection."""
-    if v.verdict == "PASS":
-        return 2 + {"evidence": 1, "consistency": 0.5}.get(v.basis, 0)
-    return 1 if v.verdict == "VERIFY_WITH_TOOL" else 0
-
-
 def _self_basis(cand):
     """Closed-book answers rest on the reasoning lobe's own samples agreeing (reasoning.solve sets that) or nothing."""
     return "consistency" if cand.confidence.basis == "consistency" else "none"

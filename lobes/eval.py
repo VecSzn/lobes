@@ -316,41 +316,7 @@ def report(quick=False, tag=""):
     for s in N:
         rs = [r for r in recs if r["cond"] == "E" and r["suite"] == s and r["seed"] == 0 and r.get("escalations")]
         out.append(f"| {s} | {len(rs)} | {sum(r['correct'] for r in rs)} |")
-    if any("level" in r for r in recs):
-        out += _traces(recs, conds)
     return "\n".join(out)
-
-
-def _traces(recs, conds):
-    """v3 rows read from the traces: which level the answer came from, and whether reflection and search fixed more
-    candidates than they broke. Judged per change on the candidate answers, not on the final answer."""
-    items = {(s, it["id"]): it for s in N for it in load_suite(s)}
-    out = ["\n### v3 from traces (seed 0): level the answer came from; reflection and search changes\n\n"
-           "| cond | medium | high | xhigh | reflect asked / changed / fixed / broke | search steps / not first / fixed / broke |\n"
-           "|---|---|---|---|---|---|"]
-    for c in conds:
-        lv, rf, se = {}, [0, 0, 0, 0], [0, 0, 0, 0]
-        for r in (r for r in recs if r["cond"] == c and r["seed"] == 0 and "level" in r):
-            lv[r["level"]] = lv.get(r["level"], 0) + 1
-            p = config.ROOT / "runs" / r["task_id"] / "trace.jsonl"
-            if not p.exists():
-                continue
-            ok = lambda a: judge(r["suite"], items[(r["suite"], r["id"])], a)[0]   # noqa: E731
-            for t in jsonl(p):
-                if t["kind"] == "reflect":
-                    rf[0] += 1
-                    if t["changed"]:
-                        b, a = ok(t["before"]), ok(t["answer"])
-                        rf[1] += 1; rf[2] += a and not b; rf[3] += b and not a
-                elif t["kind"] == "search":
-                    i = t["scores"].index(max(t["scores"]))
-                    se[0] += 1
-                    if i:
-                        b, a = ok(t["answers"][0]), ok(t["answers"][i])
-                        se[1] += 1; se[2] += a and not b; se[3] += b and not a
-        out.append(f"| {c} | " + " | ".join(str(lv.get(l, 0)) for l in ("medium", "high", "xhigh")) +
-                   f" | {' / '.join(map(str, rf))} | {' / '.join(map(str, se))} |")
-    return out
 
 
 if __name__ == "__main__":

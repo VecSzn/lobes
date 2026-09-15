@@ -24,8 +24,8 @@ tables. PREREG.md is the contract; this file says what actually happened.
    llama.cpp then returns the same text for every sample at the same temperature. Every vote in
    v1 was three identical samples (131 of 131 votes on the 4070, 108 of 110 on the 5090), so
    "three samples and a vote" was one sample. The v1 numbers stand as run. The fix (seed +
-   call index, commit 6c2a145) went into both v2 and v3 before their 5090 runs; the 44 v2
-   items already run without it were discarded and rerun.
+   call index, commit 6c2a145) went into v2 before its 5090 runs; the 44 v2 items already
+   run without it were discarded and rerun.
 6. Condition R was added after the 5090 runs started: the 9B as shipped, one chat call per
    item at the runner's cold-sample temperature and seed, thinking at the template default,
    12000-token cap, no tools, no images (so no ocrbench). The prompt gets one extra line asking
@@ -37,15 +37,14 @@ tables. PREREG.md is the contract; this file says what actually happened.
    request goes out once more with that reasoning closed by a "time is up" line and the answer
    prefilled, 2500 tokens, so the model answers from what it had. Every thinking call gets this,
    framework and R alike. It went in after v2 A/D/E and after B/C had started, so v2 runs without
-   it and v3 and R run with it; the tables count how often it fired, and a v3 D medium run
-   (medium is otherwise unchanged from v2) measures its effect on its own.
+   it and R runs with it; the tables count how often it fired.
 8. The v2 A/D/E run died after 248 items, on D s0 simpleqa-1404: the answer carried a U+2028
    line separator, Python's splitlines() breaks on that, and reading the trace back failed.
    Fixed by splitting on newlines only; D/E resumed from where they stopped, after B/C, which
    had started in the meantime.
-9. The rest of the queue was split over two 5090 boxes to finish sooner: the first keeps v2 D/E,
-   v2 high and v3 auto, a second one from the same template (driver 580 instead of 570, same
-   llama.cpp build, same model files and item ids) runs R, v3 high and v3 medium. Before the
+9. The rest of the queue was split over two 5090 boxes to finish sooner: the first keeps v2 D/E
+   and v2 high, a second one from the same template (driver 580 instead of 570, same llama.cpp
+   build, same model files and item ids) runs R. Before the
    split, R shared the first GPU with the D/E lane for nine minutes: the 22 D s0 items finished
    22:02-22:11 UTC (12 ocrbench, the 10 multistep) have inflated ms, nothing else about them
    changes; the 8 R items from that stretch were thrown away and R starts over on the second
@@ -239,10 +238,6 @@ On the same v1 code, seed and items, the 4070 and the 5090 differ by 17 points o
 70). Nothing in the code knows which GPU it is on; llama.cpp rounds differently on each and a
 30-item suite moves 3.3 points per item. Read any difference under about 15 points in this
 report as inside that band unless it points the same way in every condition.
-
-### 5090, v2 vs v3
-
-(filled in after the high and auto runs; PREREG-v3.md has W1-W3)
 
 ## Which hypotheses held
 

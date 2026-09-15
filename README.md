@@ -64,27 +64,21 @@ readers for `lobes eval`; `.[ocr]` adds the second image reader (RapidOCR, cpu).
 
 Effort is one knob for everything that costs time: whether the reasoning model thinks
 and how long, how many samples a vote draws, how many retries and steps a task gets,
-whether the escalation ladder is on, and from high up two more things. The reasoning
-lobe rereads its own draft once for a concrete mistake before the verifier sees it
-(reflect), and the verifier scores several candidates per step and keeps the best
-(width). `effort:` in lobes.yaml is the default (medium), `--effort` overrides it per
-call, and the api reads OpenAI's `reasoning_effort` field. `auto` starts at medium and
-climbs to high, then xhigh, each time the retries run out, before a bigger model takes
-over. The table is `EFFORT` in lobes/runner.py.
+and whether the escalation ladder is on. `effort:` in lobes.yaml is the default
+(medium), `--effort` overrides it per call, and the api reads OpenAI's
+`reasoning_effort` field. `auto` starts at medium and climbs to high, then xhigh, each
+time the retries run out, before a bigger model takes over. The table is `EFFORT` in
+lobes/runner.py.
 
-| level  | thinking        | think tokens | samples | retries | steps | reflect | width |
-|--------|-----------------|--------------|---------|---------|-------|---------|-------|
-| low    | never           | 0            | 1       | 1       | 6     | no      | 1     |
-| medium | on the retry    | 6000         | 3       | 2       | 10    | no      | 1     |
-| high   | always          | 16000        | 5       | 3       | 14    | yes     | 2     |
-| xhigh  | always          | 32000        | 8       | 4       | 20    | yes     | 3     |
-| max    | always          | ctx          | 12      | 6       | 30    | yes     | 4     |
+| level  | thinking        | think tokens | samples | retries | steps |
+|--------|-----------------|--------------|---------|---------|-------|
+| low    | never           | 0            | 1       | 1       | 6     |
+| medium | on the retry    | 6000         | 3       | 2       | 10    |
+| high   | always          | 16000        | 5       | 3       | 14    |
+| xhigh  | always          | 32000        | 8       | 4       | 20    |
+| max    | always          | ctx          | 12      | 6       | 30    |
 
 low also turns the ladder off. xhigh and max need `ctx` above their thinking cap.
-Reflection leaves alone a draft a tool printed, one that passed its examples, or one
-every sample agreed on; a changed answer is written to the trace and to the final
-uncertainties. Vision tasks skip the search, each candidate there already costs three
-readers.
 
 ## Results
 

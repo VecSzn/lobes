@@ -2,12 +2,10 @@
 from .. import tools
 from ..schema import Confidence, Envelope, Next, json_schema
 from . import brief
-from .verifier import backed_by, doctest_check, examples, same, unfence
+from .verifier import doctest_check, examples, same, unfence
 
 schema = json_schema(Envelope)
 schema["required"] = ["kind", "goal", "claims", "answer", "uncertainties", "next"]   # small models skip optional keys
-REFLECT = {"type": "object", "additionalProperties": False, "required": ["flaw", "answer"],
-           "properties": {"flaw": {"anyOf": [{"type": "string"}, {"type": "null"}]}, "answer": {"type": "string"}}}
 
 SYS = """You are the reasoning lobe of a small local assistant. You get a goal and observations (tool outputs, image
 descriptions) and reply with JSON matching the schema.
@@ -18,11 +16,6 @@ descriptions) and reply with JSON matching the schema.
 - If running python would settle the question, or a tool observation you need is empty or wrong, set next.action
   to "tool" and put ONE python call in tool_calls that prints what you need. Otherwise next.action is "answer".
 - uncertainties: what could be wrong, if anything."""
-
-REFLECT_SYS = """You are the reasoning lobe, checking your own draft before it goes to the verifier. Read the goal,
-the observations and the draft answer. Look for one concrete mistake: wrong arithmetic, a constraint in the goal the
-draft ignores, a case the code does not handle, a claim no observation supports. Reply with JSON: flaw is one
-sentence naming the mistake, or null if you find none; answer is the corrected answer, or the draft unchanged."""
 
 
 def solve(ctx, state):
@@ -66,33 +59,8 @@ def _best_code(ctx, state, thinking, n):
     i = max(range(len(envs)), key=lambda k: score[k][0])
     ctx.trace.write("best_of", passed=[s[0] for s in score], attempted=score[0][1], chosen=i)
     if score[i][0] == score[i][1] > 0:
-        envs[i].confidence = Confidence(score=0.9, basis="evidence")   # passed its examples; reflect leaves it alone
+        envs[i].confidence = Confidence(score=0.9, basis="evidence")   # passed its examples
     return envs[i]
-
-
-def sample(ctx, state):
-    """One more hot candidate for the runner's search; solve() gave the first."""
-    return _one(ctx, state, thinking=ctx.effort["think"] != "never", temperature=0.7)
-
-
-def reflect(ctx, state):
-    """A second look at the draft by the same lobe. Evidence beats opinion: a draft that a tool printed, that
-    passed its examples or that every sample agreed on is left alone. Otherwise a named flaw with a changed answer
-    replaces the draft, and the change stays on record for the verifier and the final answer."""
-    cand = state.candidate
-    if not cand.answer or cand.confidence.basis in ("evidence", "consistency") or backed_by(state, unfence(cand.answer)):
-        return
-    thinking = ctx.effort["think"] != "never"
-    msgs = [{"role": "system", "content": REFLECT_SYS}, {"role": "user", "content": brief(state, with_candidate=True)}]
-    r = ctx.chat(state, "reasoning", msgs, schema=REFLECT, thinking=thinking, temperature=0.2,
-                 max_tokens=_budget(ctx) if thinking else 2500)
-    flaw, new = (r.data or {}).get("flaw"), (r.data or {}).get("answer") or ""
-    changed = bool(flaw and new.strip() and not same(cand.answer, new))
-    ctx.trace.write("reflect", flaw=flaw, changed=changed, before=cand.answer[:4000], answer=new[:4000])
-    if changed:
-        cand.answer = new
-        cand.confidence = Confidence(score=0.5, basis="self")
-        cand.uncertainties.append(f"reflection changed the answer: {flaw}")
 
 
 def _budget(ctx):

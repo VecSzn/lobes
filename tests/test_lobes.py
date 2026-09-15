@@ -250,24 +250,10 @@ def test_forced_answer(monkeypatch):
     assert bodies[1]["max_tokens"] == 2500 and bodies[0]["max_tokens"] == 100
 
 
-def test_reflect_and_score(tmp_path):
-    from lobes.lobe import reasoning
-    st = _state("who wrote it", "Alice", "qa")
-    reasoning.reflect(FakeCtx(tmp_path, [{"flaw": "wrong person", "answer": "Bob"}], effort="high"), st)
-    assert st.candidate.answer == "Bob" and "wrong person" in st.candidate.uncertainties[-1]
-    reasoning.reflect(FakeCtx(tmp_path, [{"flaw": None, "answer": "Carol"}], effort="high"), st)
-    assert st.candidate.answer == "Bob"                                      # no flaw named, no change
-    st = _state("what is 17 * 23", "391", "math", ["391"])
-    reasoning.reflect(FakeCtx(tmp_path, [], effort="high"), st)              # tool-backed: not even asked
-    assert st.candidate.answer == "391"
-    assert verifier.score(Verdict(verdict="PASS", basis="evidence")) > verifier.score(Verdict(verdict="PASS")) \
-        > verifier.score(Verdict(verdict="VERIFY_WITH_TOOL")) > verifier.score(Verdict(verdict="RETRY"))
-
-
-def test_auto_climb_and_search(tmp_path, monkeypatch):
+def test_auto_climb(tmp_path, monkeypatch):
     """auto: a math answer the tool contradicts is retried at medium, then the effort climbs to high and xhigh
-    (search and reflection on) before the run gives up; the eval config has no model ladder"""
-    from lobes.lobe import language, reasoning
+    before the run gives up; the eval config has no model ladder"""
+    from lobes.lobe import language
     cfg = config.load()
     cfg["_root"], cfg["effort"], cfg["no_escalate"] = tmp_path, "auto", True
 
@@ -278,8 +264,6 @@ def test_auto_climb_and_search(tmp_path, monkeypatch):
             return _reply({"why": "compute", "call": {"name": "python", "args": {"code": "print(17*23)"}}})
         if lobe == "language":
             return _reply({"answer": "392"})
-        if schema is reasoning.REFLECT:
-            return _reply({"flaw": "the tool printed 391", "answer": "392"})     # names a flaw, keeps the answer
         if lobe == "reasoning":
             return _reply({"kind": "step_result", "goal": state.goal, "answer": "392", "next": {"action": "answer"},
                            "claims": [{"id": "c1", "text": "17 * 23 = 392", "support": "tool", "evidence": "tool_0"}]})
@@ -290,7 +274,6 @@ def test_auto_climb_and_search(tmp_path, monkeypatch):
     trace = [json.loads(l) for l in (tmp_path / "runs" / state.task_id / "trace.jsonl").read_text(encoding="utf-8").splitlines()]
     assert [t["level"] for t in trace if t["kind"] == "effort"] == ["high", "xhigh"] and state.effort == "xhigh"
     assert all(v.verdict == "RETRY" for v in state.verdicts) and len(state.verdicts) == 3 + 4 + 5
-    assert any(t["kind"] == "search" for t in trace) and any(t["kind"] == "reflect" for t in trace)
     assert state.answer == language.HEDGE + "392"
 
 

@@ -14,13 +14,12 @@ from .models import ModelManager
 from .schema import Envelope, Observation
 
 LADDER = ("escalate", "remote")      # who takes over reasoning once retries are used up, in this order
-EFFORT = {   # reasoning_effort: when thinking turns on, its token cap, samples per vote, retries, steps, the ladder,
-             # whether each candidate gets a reflection pass, and how many candidates the verifier scores per step
-    "low":    dict(think="never",  budget=0,     n=1,  retries=1, steps=6,  ladder=False, reflect=False, width=1),
-    "medium": dict(think="retry",  budget=6000,  n=3,  retries=2, steps=10, ladder=True,  reflect=False, width=1),
-    "high":   dict(think="always", budget=16000, n=5,  retries=3, steps=14, ladder=True,  reflect=True,  width=2),
-    "xhigh":  dict(think="always", budget=32000, n=8,  retries=4, steps=20, ladder=True,  reflect=True,  width=3),
-    "max":    dict(think="always", budget=None,  n=12, retries=6, steps=30, ladder=True,  reflect=True,  width=4),   # None: the context is the cap
+EFFORT = {   # reasoning_effort: when thinking turns on, its token cap, samples per vote, retries, steps, the ladder
+    "low":    dict(think="never",  budget=0,     n=1,  retries=1, steps=6,  ladder=False),
+    "medium": dict(think="retry",  budget=6000,  n=3,  retries=2, steps=10, ladder=True),
+    "high":   dict(think="always", budget=16000, n=5,  retries=3, steps=14, ladder=True),
+    "xhigh":  dict(think="always", budget=32000, n=8,  retries=4, steps=20, ladder=True),
+    "max":    dict(think="always", budget=None,  n=12, retries=6, steps=30, ladder=True),   # None: the context is the cap
 }
 AUTO = ("medium", "high", "xhigh")   # effort: auto starts at the first and climbs one level each time the retries run out
 
@@ -186,7 +185,7 @@ def run(cfg, goal, *, profile=None, images=None, task_id=None):
         if env.next.action == "tool" and env.tool_calls:
             run_tools(ctx, state, env.tool_calls)     # reasoning wants evidence before committing
             continue
-        v = _judge(ctx, state, reasoning, verifier)
+        v = verifier.verify(ctx, state)
         state.verdicts.append(v)
         trace.write("verdict", **v.model_dump())
         if v.verdict == "PASS":
@@ -211,28 +210,6 @@ def run(cfg, goal, *, profile=None, images=None, task_id=None):
             continue
         break                           # out of moves, answer with what we have and say so
     return _finish(ctx, state, language)
-
-
-def _judge(ctx, state, reasoning, verifier):
-    """One candidate goes straight to the verifier. At width > 1 the verifier scores that many and the best stays
-    as the candidate: a beam one step wide, with the verdict as the value. Vision skips it, each candidate there
-    already costs three readers."""
-    e = ctx.effort
-    cands = [state.candidate]
-    if e["width"] > 1 and not state.images:
-        more = (reasoning.sample(ctx, state) for _ in range(e["width"] - 1))
-        cands += [c for c in more if c.next.action != "tool"]
-    scored = []
-    for c in cands:
-        state.candidate = c
-        if e["reflect"]:
-            reasoning.reflect(ctx, state)
-        v = verifier.verify(ctx, state)
-        scored.append((verifier.score(v), c, v))
-    if len(scored) > 1:
-        ctx.trace.write("search", answers=[c.answer for _, c, _ in scored], scores=[s for s, _, _ in scored])
-    _, state.candidate, v = max(scored, key=lambda t: t[0])     # ties go to the first, the cold sample
-    return v
 
 
 def _finish(ctx, state, language):

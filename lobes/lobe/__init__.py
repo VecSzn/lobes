@@ -2,7 +2,7 @@
 answers is decided by lobes.yaml, not here."""
 
 
-def brief(state, with_candidate=False):
+def brief(state):
     """The shared view of the task that every lobe gets as its user message."""
     lines = [f"Goal: {state.goal}"]
     if state.plan is not None and state.plan.answer:
@@ -11,8 +11,6 @@ def brief(state, with_candidate=False):
         lines.append("Observations:")
         for o in state.observations:
             lines.append(f"[{o.ref}] ({o.source}) {o.summary}")
-    if with_candidate and state.candidate is not None:
-        lines.append(f"Draft answer: {state.candidate.answer}")
     if state.verdicts and state.verdicts[-1].verdict != "PASS":
         v = state.verdicts[-1]
         lines.append(f"The previous attempt was rejected ({v.verdict}): {v.notes}"
