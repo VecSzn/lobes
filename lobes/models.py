@@ -5,9 +5,12 @@ the least recently used non-resident model until X fits. Every load/unload is ti
 real nvidia-smi reading is kept next to our estimate so the yaml numbers can be corrected.
 """
 import subprocess
+import threading
 import time
 
 import httpx
+
+_lock = threading.Lock()
 
 
 class ModelManager:
@@ -44,12 +47,18 @@ class ModelManager:
     def ensure(self, name):
         if name not in self.models:
             raise KeyError(f"unknown model {name}, add it to lobes.yaml")
-        if self.status().get(name) == "loaded":
+        with _lock:     # tasks running in parallel share the router; a second load of a loading model is a 400
+            return self._ensure(name)
+
+    def _ensure(self, name):
+        st = self.status().get(name)
+        if st == "loaded":
             self._touch(name)
             return 0
         self._free(self.models[name]["vram_mb"])
         t0 = time.perf_counter()
-        httpx.post(self.base + "/models/load", json={"model": name}, timeout=30).raise_for_status()
+        if st != "loading":
+            httpx.post(self.base + "/models/load", json={"model": name}, timeout=30).raise_for_status()
         self._wait(name, "loaded")
         ms = int((time.perf_counter() - t0) * 1000)
         self._touch(name)

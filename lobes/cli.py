@@ -126,6 +126,7 @@ def eval_(conditions: str = "R,A,B,B3,C,D,E,F", seeds: str = "0,1,2", suites: st
           quick: bool = typer.Option(False, help="3 items per suite, for timing"),
           tag: str = typer.Option("", help="subdirectory of eval/results, one per code version or machine"),
           effort: str = typer.Option(None, help="low, medium, high, xhigh, max or auto, for every condition; default is effort in lobes.yaml"),
+          workers: int = typer.Option(1, help="items run at once; more than 1 only where every model stays loaded"),
           report: bool = typer.Option(False, help="print the tables from eval/results instead of running")):
     from . import eval as eval_
     if report:
@@ -135,7 +136,7 @@ def eval_(conditions: str = "R,A,B,B3,C,D,E,F", seeds: str = "0,1,2", suites: st
     if effort:
         cfg["effort"] = effort
     eval_.main(cfg, conditions.split(","), [int(x) for x in seeds.split(",")], quick,
-               suites.split(",") if suites else None, tag)
+               suites.split(",") if suites else None, tag, workers)
 
 
 @app.command()

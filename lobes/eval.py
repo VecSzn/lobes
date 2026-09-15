@@ -8,6 +8,7 @@ import subprocess
 import sys
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import httpx
@@ -228,7 +229,7 @@ def plan(cond, seed, quick, suites=None):
         yield suite, load_suite(suite)[:n]
 
 
-def main(cfg, conditions, seeds, quick=False, suites=None, tag=""):
+def main(cfg, conditions, seeds, quick=False, suites=None, tag="", workers=1):
     sys.stdout.reconfigure(errors="replace")  # windows console is gbk; an umlaut in an answer killed a run
     fetch()
     results = RESULTS / tag                   # a tag keeps one code version's run apart from another's
@@ -246,15 +247,20 @@ def main(cfg, conditions, seeds, quick=False, suites=None, tag=""):
             done = set()
             if out.exists():
                 done = {(r["suite"], r["id"]) for r in jsonl(out)}
-            for suite, items in plan(cond, seed, quick, suites):
-                for item in items:
-                    if (suite, item["id"]) in done:
-                        continue
-                    rec = run_item(cfg, cond, seed, suite, item, vram, tag)
-                    with open(out, "a", encoding="utf-8") as f:
-                        f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+            todo = [(suite, item) for suite, items in plan(cond, seed, quick, suites) for item in items
+                    if (suite, item["id"]) not in done]
+            lock = threading.Lock()
+
+            def one(suite, item):
+                rec = run_item(cfg, cond, seed, suite, item, vram, tag)
+                with lock, open(out, "a", encoding="utf-8") as f:
+                    f.write(json.dumps(rec, ensure_ascii=False) + "\n")
                     print(f"{cond} s{seed} {suite} {item['id']}: {'ok' if rec['correct'] else 'x '} {rec['ms']} ms "
                           f"{rec.get('tokens', {}).get('total_tokens', 0)} tok {rec.get('answer', rec.get('error', ''))[:60]!r}", flush=True)
+
+            # workers > 1 only where every model stays loaded: each task has its own swap manager
+            with ThreadPoolExecutor(workers) as pool:
+                list(pool.map(lambda si: one(*si), todo))
 
 
 def report(quick=False, tag=""):
