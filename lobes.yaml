@@ -63,7 +63,8 @@ providers:
 # xhigh and max think past 16k tokens, so raise ctx first.
 effort: medium
 
-# a lobe is filled with "provider/model", or a non-LLM implementation name.
+# a lobe is filled with "provider/model", or a non-LLM implementation name. The verifier lobe is code
+# (lobes/lobe/verifier.py: the task's own examples, text matching) and has no slot.
 profile: specialists
 profiles:
   specialists:                      # one family per lobe where it doesn't hurt; swapping is the normal case
@@ -72,14 +73,12 @@ profiles:
     reasoning:  local/qwen3.5-4b
     motor:      local/granite-h-micro
     language:   local/gemma4-e2b
-    verifier:   local/gemma4-e2b      # nemotron-nano-4b was the plan; it answers blind re-solves with punctuation, see DECISIONS
   shared:                           # same weights, different prompts; nothing swaps
     executive:  local/granite-1b
     perception: local/qwen3.5-4b-vl
     reasoning:  local/qwen3.5-4b-vl
     motor:      local/qwen3.5-4b-vl
     language:   passthrough
-    verifier:   local/qwen3.5-4b-vl
   # eval controls: one model in every slot, same scaffolding. "none" = slot empty (no vision)
   single-9b:                        # the 9B alone is also the eval baseline R: one call, no lobes
     executive:  local/qwen3.5-9b
@@ -87,11 +86,9 @@ profiles:
     reasoning:  local/qwen3.5-9b
     motor:      local/qwen3.5-9b
     language:   passthrough
-    verifier:   local/qwen3.5-9b
   single-4b:
     executive:  local/qwen3.5-4b-vl
     perception: local/qwen3.5-4b-vl
     reasoning:  local/qwen3.5-4b-vl
     motor:      local/qwen3.5-4b-vl
     language:   passthrough
-    verifier:   local/qwen3.5-4b-vl

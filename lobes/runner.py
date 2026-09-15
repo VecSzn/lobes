@@ -2,7 +2,7 @@
 
 INTAKE -> FAST | LOOK -> WITNESS, WITNESS, ... until enough agree -> ANSWER
                           the first witness hands back code when the goal wants source:
-                          examples or a blind test -> retry with the failure attached
+                          the task's own examples -> retry with the failure attached
 
 A witness sees the goal (and the image notes), never another witness. Two agreeing is the answer.
 """
@@ -10,6 +10,8 @@ import json
 import time
 import uuid
 from dataclasses import dataclass, field
+
+import httpx
 
 from . import config, providers, tools
 from .lobe import Witness, agree, settle
@@ -53,6 +55,7 @@ class TaskState:
     goal: str
     images: list
     task_class: str = "qa"           # chat | code | vision | qa
+    kind: str = "qa"                 # the executive's call: chat | math | code | qa
     route: str = "lobes"             # fast | lobes
     needs_tool: bool = False
     observations: list = field(default_factory=list)   # Observation: what perception and ocr read from images
@@ -125,10 +128,22 @@ class Ctx:
                 state.swaps += op == "load"
         mcfg = self.cfg["models"].get(model, {})
         seed = self.cfg.get("seed")   # one seed per call: with the same seed every hot sample came back identical
-        r = providers.chat(self.cfg["providers"][prov], model, messages, schema=schema, images=images,
-                           thinking=thinking if mcfg.get("thinking") else None, temperature=temperature,
-                           max_tokens=max_tokens, seed=None if seed is None else seed + len(state.calls),
-                           ctx=mcfg.get("ctx") or self.cfg.get("llama", {}).get("ctx"))
+
+        def call():
+            return providers.chat(self.cfg["providers"][prov], model, messages, schema=schema, images=images,
+                                  thinking=thinking if mcfg.get("thinking") else None, temperature=temperature,
+                                  max_tokens=max_tokens, seed=None if seed is None else seed + len(state.calls),
+                                  ctx=mcfg.get("ctx") or self.cfg.get("llama", {}).get("ctx"))
+        try:
+            r = call()
+        except httpx.HTTPStatusError as e:
+            if not thinking:
+                raise
+            # the server's slots share one context and a long think under load overran it (the 2B on images,
+            # 5 of 50 on the 5090 with four in flight); a plain answer beats none
+            self.trace.write("refused", lobe=lobe, model=f"{prov}/{model}", status=e.response.status_code)
+            thinking, max_tokens = False, min(max_tokens, 2500)
+            r = call()
         toks = r.usage.get("total_tokens", 0)
         for k in ("prompt_tokens", "completion_tokens", "total_tokens"):
             state.usage[k] = state.usage.get(k, 0) + r.usage.get(k, 0)
@@ -161,7 +176,7 @@ def capped(ctx, state):
         state.capped = "steps"
     elif e["calls"] and len(state.calls) >= e["calls"]:
         state.capped = "calls"
-    elif e["tokens"] and state.usage.get("total_tokens", 0) >= e["tokens"]:
+    elif e["tokens"] and state.usage.get("completion_tokens", 0) >= e["tokens"]:   # generated: a forced answer re-sends its thinking as prompt
         state.capped = "tokens"
     elif e["seconds"] and state.ms() >= e["seconds"] * 1000:
         state.capped = "seconds"
@@ -170,8 +185,9 @@ def capped(ctx, state):
 
 def _plan(ctx, state):
     """Who derives the answer, in order, as (lobe, callable). The reasoning lobe goes first, thinking as the effort
-    says (it may hand back code); motor and the verifier answer plain; then hot samples of the reasoning lobe up
-    to n thinking samples in all, the loop stopping as soon as enough agree."""
+    says (it may hand back code); motor answers plain; then hot samples of the reasoning lobe up to n thinking
+    samples in all, the loop stopping as soon as enough agree. The verifier model solved blind as a third witness
+    until 09-15: right 17 of 143 times on gsm8k, and its pairs with motor were wrong 10 of 10 (REPORT, 18)."""
     from .lobe import motor, perception, reasoning
     n = ctx.effort["n"]
 
@@ -182,7 +198,7 @@ def _plan(ctx, state):
     if state.task_class == "vision":
         plan = [("perception", lambda: perception.ask(ctx, state)), first]
     elif state.needs_tool:
-        plan = [first, ("motor", lambda: motor.witness(ctx, state)), ("verifier", rw(lobe="verifier", thinking=False))]
+        plan = [first, ("motor", lambda: motor.witness(ctx, state))]
     else:
         plan = [first]
     plan += [("reasoning", rw(temperature=0.7))] * (n - 1)
@@ -190,12 +206,16 @@ def _plan(ctx, state):
 
 
 def _need(ctx, state):
-    """-> (witnesses to count, how many must agree). Anything a program can settle needs two, out of all of
-    them; a closed-book answer needs n samples in a row."""
-    if state.task_class == "vision" or state.needs_tool or any(w.ran for w in state.witnesses):
-        return state.witnesses, 2
+    """-> (witnesses to count, how many must agree, the lobe every agreeing pair must include). Anything a
+    program can settle needs two, out of all of them; a closed-book answer needs n samples in a row. On an image
+    only the perception lobe saw it: the reasoning lobe reads the same notes every sample, so two of its samples
+    agreeing is one reading twice (5090: it outvoted a right perception read 3 of 50 times at both levels)."""
+    if state.task_class == "vision":
+        return state.witnesses, 2, "perception"
+    if state.needs_tool or any(w.ran for w in state.witnesses):
+        return state.witnesses, 2, None
     n = ctx.effort["n"]
-    return state.witnesses[-n:], n
+    return state.witnesses[-n:], n, None
 
 
 def _witnesses(ctx, state):
@@ -228,8 +248,9 @@ def _witnesses(ctx, state):
         peers = [w.lobe for w in live if w is best or agree(best.value, w.value, state.goal)]
         v = Verdict(verdict="PASS", basis=state.basis, notes=f"{', '.join(peers)} agree on {best.value[:100]!r}")
     else:
-        # no majority: the reasoning lobe's value goes out hedged, the others as uncertainties
-        best = next((w for w in live if w.lobe == "reasoning"), live[0] if live else None)
+        # no majority: the value of the lobe that saw the most goes out hedged, the others as uncertainties
+        lead = _need(ctx, state)[2] or "reasoning"
+        best = next((w for w in live if w.lobe == lead), live[0] if live else None)
         state.value = best.value if best else None
         state.uncertainties = [f"the {w.lobe} lobe got {w.value[:80]!r}" for w in live if w is not best][:3]
         v = Verdict(verdict="CONFLICT", failed_claims=["answer"],
@@ -239,8 +260,8 @@ def _witnesses(ctx, state):
 
 
 def _code(ctx, state):
-    """The reasoning lobe delivered a program: run the task's examples (or a blind test), and re-implement with
-    the failure attached."""
+    """The reasoning lobe delivered a program: run the task's examples, and re-implement with the failure
+    attached. No examples, no check: it goes out as basis none."""
     from .lobe import reasoning, verifier
     code, v = state.code, Verdict(verdict="CONFLICT", failed_claims=["answer"], notes="no implementation")
     for attempt in range(ctx.effort["retries"] + 1):

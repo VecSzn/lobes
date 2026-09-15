@@ -30,7 +30,7 @@ def intake(ctx, state):
         return
     r = ctx.chat(state, "executive", [{"role": "system", "content": CLASS_SYS}, {"role": "user", "content": state.goal.strip()}],
                  schema=CLASS_SCHEMA, thinking=False, max_tokens=40)
-    kind = r.data["kind"] if r.data else "qa"
+    kind = state.kind = r.data["kind"] if r.data else "qa"
     if kind == "chat":
         state.task_class, state.route = "chat", "fast"
     else:

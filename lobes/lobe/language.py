@@ -3,7 +3,7 @@ without adding facts, and code throws the rewrite away if a value went missing."
 import re
 
 from ..schema import Confidence, Envelope, Next
-from .verifier import norm, nums
+from .verifier import _is_code, norm, nums
 
 SYS = ("You are the language lobe. Rewrite the draft answer for the user: same facts, same values, in the language "
        "of the goal, no new claims, no preamble. If uncertainties are listed, say so in one sentence at the end.")
@@ -20,6 +20,8 @@ def faithful(out, draft, goal):
     given = set(nums(goal))
     if set(nums(out)) - given != set(nums(draft)) - given:
         return False
+    if nums(draft) and nums(out)[-1] != nums(draft)[-1]:
+        return False     # the value stays last: "10 inches" came back as "10 inches tall after 3 weeks" (gsm8k-616)
     o = norm(out)
     return all(norm(line) in o for line in draft.splitlines() if norm(line))
 
@@ -41,7 +43,9 @@ def say(ctx, state):
             answer = out
         elif out:
             ctx.trace.write("language_rejected", text=out[:500])   # the rewrite lost a value; keep the draft
-    if state.route != "fast" and state.task_class != "code" and state.basis == "none":
-        answer = HEDGE + answer if answer else HEDGE.split(".")[0] + "."   # nothing backs it: say so where the user (and the SimpleQA judge) can see it
+    if state.route != "fast" and state.task_class != "code" and state.basis == "none" and not _is_code(answer):
+        # nothing backs it: say so where the user (and the SimpleQA judge) can see it. Code stays code, the
+        # confidence carries the doubt: a prefix on a witness's program is a SyntaxError
+        answer = HEDGE + answer if answer else HEDGE.split(".")[0] + "."
     return Envelope(kind="final", goal=state.goal, answer=answer, uncertainties=unc,
                     confidence=confidence(state), next=Next(action="answer"))

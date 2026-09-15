@@ -51,9 +51,14 @@ def look(ctx, state, images=None):
 
 
 def ask(ctx, state):
-    """The perception witness: answers the question from the image directly. Not written to the observations,
-    so the reasoning witness reads the description and the ocr lines without knowing this answer."""
-    from . import Witness
-    r = ctx.chat(state, "perception", [{"role": "user", "content": f"Look at the image and answer with only the answer, nothing else: {state.goal}"}],
-                 schema=ANSWER, images=state.images, thinking=False, max_tokens=300)
+    """The perception witness: answers the question from the image directly, thinking as the effort says (the 2B
+    on the 5090: 34 of 45 right thinking, 31 plain, same images). Not written to the observations, so the
+    reasoning witness reads the description and the ocr lines without knowing this answer."""
+    from . import Witness, budget
+    think = ctx.effort["think"]
+    msgs = [{"role": "user", "content": f"Look at the image and answer with only the answer, nothing else: {state.goal}"}]
+    r = ctx.chat(state, "perception", msgs, schema=ANSWER, images=state.images, thinking=think,
+                 max_tokens=budget(ctx) if think else 300)
+    if r.data is None and think:
+        r = ctx.chat(state, "perception", msgs, schema=ANSWER, images=state.images, thinking=False, max_tokens=300)
     return Witness("perception", (r.data or {}).get("answer", r.text).strip() or None)

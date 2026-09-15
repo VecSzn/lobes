@@ -44,15 +44,19 @@ def test_agree_and_settle():
     assert agree("18271.111\n28", "333833500, 18271.111, 28", "sum of squares to 1000")
     assert agree("27660\n110", "Sum: 27660, Count: 110", "sum and count") and not agree("9\n7", "2\n7", "check digits")
     assert not agree("15511210043330985984000000\n26\n3\n72", "26, 6, 72", "25 factorial, digits, zeros, digit sum")
-    ws = [Witness("motor", "390", ran=True), Witness("reasoning", "391", ran=True), Witness("verifier", "391")]
-    best, basis = settle(ws, 2, goal)
+    ws = [Witness("motor", "390", ran=True), Witness("reasoning", "391", ran=True), Witness("reasoning", "391")]
+    best, basis = settle(ws, 2, None, goal)
     assert best is ws[1] and basis == "evidence"
-    assert settle(ws[:2], 2, goal) is None
-    assert settle([ws[2]], 1, goal) == (ws[2], "none")
-    assert settle([Witness("a", "Alice"), Witness("b", "Alice")], 2, "who")[1] == "consistency"
+    assert settle(ws[:2], 2, None, goal) is None
+    assert settle([ws[2]], 1, None, goal) == (ws[2], "none")
+    assert settle([Witness("a", "Alice"), Witness("b", "Alice")], 2, None, "who")[1] == "consistency"
     g = "solve for x: 5x - 3 = 2x + 21"       # two model-written 7s do not outvote the program that printed 8
-    assert settle([Witness("r", "7"), Witness("v", "x = 7"), Witness("m", "8", ran=True)], 2, g) is None
-    assert settle([Witness("r", "7"), Witness("v", "x = 7")], 2, g)[1] == "consistency"
+    assert settle([Witness("r", "7"), Witness("v", "x = 7"), Witness("m", "8", ran=True)], 2, None, g) is None
+    assert settle([Witness("r", "7"), Witness("v", "x = 7")], 2, None, g)[1] == "consistency"
+    ws = [Witness("perception", "would"), Witness("reasoning", "will"), Witness("ocr", "will", ran=True), Witness("reasoning", "will")]
+    assert settle(ws, 2, "perception", "the word") is None       # nobody who saw the image is in the pair
+    best, basis = settle(ws + [Witness("ocr", "would", ran=True)], 2, "perception", "the word")
+    assert (best.value, basis) == ("would", "evidence")
 
 
 class FakeRouter:
@@ -127,7 +131,8 @@ def _run(tmp_path, monkeypatch, goal, answers, **cfg_over):
         else:
             i = min(len(sent[lobe]) - 1, len(a) - 1)
             r = _reply(a[i]) if isinstance(a[i], dict) else a[i]
-        state.usage["total_tokens"] = state.usage.get("total_tokens", 0) + r.usage["total_tokens"]
+        for k in ("total_tokens", "completion_tokens"):
+            state.usage[k] = state.usage.get(k, 0) + r.usage["total_tokens"]
         state.calls.append((lobe, "fake/think" if thinking else "fake", 1, r.usage["total_tokens"]))
         return r
 
@@ -145,7 +150,7 @@ def test_two_witnesses_agree(tmp_path, monkeypatch):
     """math: the reasoning lobe's check and the motor lobe's program print the same value, nobody else runs"""
     st, seen, trace, _ = _run(tmp_path, monkeypatch, "what is 17 * 23", {
         "motor": [_program("print(17*23)")],
-        "reasoning": [{"values": ["391"], "check": "print(17 * 23)", "code": None}]})
+        "reasoning": [{"values": ["391"], "program":"print(17 * 23)", "code": None}]})
     assert st.task_class == "qa" and st.needs_tool and st.route == "lobes"
     assert seen == ["executive", "reasoning", "motor"]       # a bare value is not sent to the language lobe
     assert [(w.lobe, w.value, w.ran) for w in st.witnesses] == [("reasoning", "391", True), ("motor", "391", True)]
@@ -156,27 +161,24 @@ def test_two_witnesses_agree(tmp_path, monkeypatch):
 
 
 def test_third_witness_breaks_a_tie(tmp_path, monkeypatch):
-    """the motor program is wrong; the verifier lobe, blind, sides with the reasoning lobe"""
+    """the motor program is wrong; a hot sample of the reasoning lobe, blind, sides with its first"""
     st, seen, _, sent = _run(tmp_path, monkeypatch, "what is 17 * 23", {
         "motor": [_program("print(17*22)")],
-        "reasoning": [{"values": ["391"], "check": "print(17 * 23)", "code": None}],
-        "verifier": [{"values": ["391"], "check": "print(17*23)", "code": None}]})
-    assert seen == ["executive", "reasoning", "motor", "verifier"]
-    assert st.value == "391" and st.basis == "evidence" and "reasoning, verifier agree" in st.verdicts[-1].notes
-    for lobe in ("reasoning", "verifier"):           # blind: no other witness's value in what they were sent
-        assert "374" not in json.dumps(sent[lobe])
+        "reasoning": [{"values": ["391"], "program":"print(17 * 23)", "code": None}]})
+    assert seen == ["executive", "reasoning", "motor", "reasoning"]
+    assert st.value == "391" and st.basis == "evidence" and "reasoning, reasoning agree" in st.verdicts[-1].notes
+    assert "374" not in json.dumps(sent["reasoning"])    # blind: no other witness's value in what it was sent
 
 
 def test_no_majority_is_hedged(tmp_path, monkeypatch):
-    """reasoning thinks, motor and the verifier answer plain, two hot samples fill n; still nothing agrees"""
+    """reasoning thinks, motor answers plain, two hot samples fill n; still nothing agrees"""
     from lobes.lobe import language
     n = iter(range(391, 400))
     st, seen, _, _ = _run(tmp_path, monkeypatch, "what is 17 * 23", {
         "motor": [_program("print(17*22)")],
-        "reasoning": lambda m: {"values": [str(next(n))], "check": None, "code": None},
-        "verifier": [{"values": ["400"], "check": None, "code": None}]})
-    assert seen == ["executive", "reasoning", "motor", "verifier", "reasoning", "reasoning"]
-    assert [m for lobe, m, *_ in st.calls if lobe in ("reasoning", "verifier")] == ["fake/think", "fake", "fake/think", "fake/think"]
+        "reasoning": lambda m: {"values": [str(next(n))], "program":None, "code": None}})
+    assert seen == ["executive", "reasoning", "motor", "reasoning", "reasoning"]
+    assert [m for lobe, m, *_ in st.calls if lobe != "executive"] == ["fake/think", "fake", "fake/think", "fake/think"]
     assert st.verdicts[-1].verdict == "CONFLICT" and st.basis == "none"
     assert st.answer == language.HEDGE + "391" and len(st.uncertainties) == 3
 
@@ -185,7 +187,7 @@ def test_program_repair_and_restatement(tmp_path, monkeypatch):
     """a program that dies gets one repair with its stderr; a check that just prints the answer is not evidence"""
     st, seen, _, sent = _run(tmp_path, monkeypatch, "what is 17 * 23", {
         "motor": [_program("print(17*23"), _program("print(17*23)")],
-        "reasoning": [{"values": ["391"], "check": "print(391)", "code": None}]})
+        "reasoning": [{"values": ["391"], "program":"print(391)", "code": None}]})
     assert seen == ["executive", "reasoning", "motor", "motor"] and st.retries == 1
     assert "SyntaxError" in sent["motor"][1][-1]["content"]
     assert [(w.ran, w.note) for w in st.witnesses] == [(False, "restated"), (True, "")]
@@ -199,17 +201,17 @@ def test_auto_climb(tmp_path, monkeypatch):
     n = iter(range(1000, 2000))
     st, seen, trace, _ = _run(tmp_path, monkeypatch, "what is 17 * 23", {
         "motor": [_program("print(17*22)")],
-        "reasoning": lambda m: {"values": [str(next(n))], "check": None, "code": None},
-        "verifier": [{"values": ["392"], "check": None, "code": None}]}, effort="auto")
+        "reasoning": lambda m: {"values": [str(next(n))], "program":None, "code": None}}, effort="auto")
     assert [t["level"] for t in trace if t["kind"] == "effort"] == ["high", "xhigh"] and st.effort == "xhigh"
-    assert len(st.witnesses) == 2 + runner.EFFORT["xhigh"]["n"] and seen.count("reasoning") == runner.EFFORT["xhigh"]["n"]
+    assert len(st.witnesses) == 1 + runner.EFFORT["xhigh"]["n"] and seen.count("reasoning") == runner.EFFORT["xhigh"]["n"]
     assert st.verdicts[-1].verdict == "CONFLICT" and st.answer == language.HEDGE + "1000"
 
 
 def test_token_cap(tmp_path, monkeypatch):
+    """the cap counts generated tokens; past it no hot sample is drawn"""
     st, seen, _, _ = _run(tmp_path, monkeypatch, "what is 17 * 23", {
-        "motor": [_reply(_program("print(17*22)"), tokens=7000)],
-        "reasoning": [{"values": ["391"], "check": None, "code": None}]}, effort="low")
+        "motor": [_reply(_program("print(17*22)"), tokens=17000)],
+        "reasoning": [{"values": ["391"], "program":None, "code": None}]})
     assert seen == ["executive", "reasoning", "motor"] and st.capped == "tokens"
     assert "capped by tokens" in st.verdicts[-1].notes and st.answer.startswith("Not sure")
 
@@ -219,12 +221,12 @@ def test_closed_book_unanimity(tmp_path, monkeypatch):
     from lobes.lobe import language
     exe = {"kind": "qa", "needs_tool": False}
     st, seen, _, _ = _run(tmp_path, monkeypatch, "who wrote it", {
-        "executive": [exe], "reasoning": [{"values": ["Alice"], "check": None, "code": None}], "language": [{"answer": "Alice"}]})
+        "executive": [exe], "reasoning": [{"values": ["Alice"], "program":None, "code": None}], "language": [{"answer": "Alice"}]})
     assert seen == ["executive", "reasoning", "reasoning", "reasoning", "language"]
     assert st.basis == "consistency" and st.answer == "Alice"
     k = iter(range(100))
     st, seen, _, _ = _run(tmp_path, monkeypatch, "who wrote it", {
-        "executive": [exe], "reasoning": lambda m: {"values": ["Alice" if next(k) % 2 == 0 else "Bob"], "check": None, "code": None},
+        "executive": [exe], "reasoning": lambda m: {"values": ["Alice" if next(k) % 2 == 0 else "Bob"], "program":None, "code": None},
         "language": [{"answer": "Alice"}]})
     assert seen.count("reasoning") == 3 and st.basis == "none" and st.answer == language.HEDGE + "Alice"
     assert runner.effort({"effort": "auto"}) is runner.EFFORT["medium"]
@@ -244,6 +246,22 @@ def test_vision_ocr_witness(tmp_path, monkeypatch):
     assert [(w.lobe, w.ran) for w in st.witnesses] == [("perception", False), ("ocr", True)]
     assert st.basis == "evidence" and st.answer == "42"
     assert [o.source for o in st.observations] == ["lobe:perception", "tool:ocr"]
+
+
+def test_vision_perception_anchors(tmp_path, monkeypatch):
+    """the reasoning lobe reads the notes, not the image: its samples agreeing with each other or with the engine
+    settle nothing without the perception lobe, whose read then goes out hedged"""
+    from lobes.lobe import language, perception
+    monkeypatch.setattr(perception, "ocr", lambda path: ["will"])
+    img = tmp_path / "x.png"
+    img.write_bytes(b"")
+    st, seen, _, _ = _run(tmp_path, monkeypatch, "which word is underlined?", {
+        "perception": [{"description": "a page", "text": "we will", "details": []}, {"answer": "would"}],
+        "reasoning": [{"answer": "will"}], "language": [{"answer": "would"}]}, images=[img])
+    assert seen == ["perception", "perception", "reasoning", "reasoning", "reasoning", "language"]
+    assert [m for lobe, m, *_ in st.calls if lobe == "perception"] == ["fake", "fake/think"]   # it looks plain, answers thinking
+    assert [(w.lobe, w.value) for w in st.witnesses] == [("perception", "would")] + [("reasoning", "will"), ("ocr", "will")] * 3
+    assert st.verdicts[-1].verdict == "CONFLICT" and st.answer == language.HEDGE + "would"
 
 
 class FakeCtx:
@@ -272,20 +290,26 @@ def test_verify_code(tmp_path):
     assert (v.verdict, v.basis) == ("PASS", "evidence")                       # the task's own examples, no model
     v = verifier.verify_code(FakeCtx(tmp_path, []), _state(goal, "code"), "def dbl(x):\n    return x")
     assert v.verdict == "RETRY" and "0/1" in v.notes
-    # a blind test that raises inside itself is the test's fault, one that asserts is the candidate's
-    st = _state("write add(a, b)", "code")
-    v = verifier.verify_code(FakeCtx(tmp_path, [{"test": "assert add(1, 2) == 3\nhelper()"}]), st, "def add(a, b):\n    return a + b")
-    assert (v.verdict, v.basis) == ("PASS", "none") and "test itself broke" in v.notes
-    v = verifier.verify_code(FakeCtx(tmp_path, [{"test": "assert add(1, 2) == 4"}]), st, "def add(a, b):\n    return a + b")
-    assert v.verdict == "RETRY"
+    v = verifier.verify_code(FakeCtx(tmp_path, []), _state("write add(a, b)", "code"), "def add(a, b):\n    return a + b")
+    assert (v.verdict, v.basis) == ("PASS", "none") and "no examples" in v.notes   # nothing to run, no model asked
     v = verifier.verify_code(FakeCtx(tmp_path, []), _state("regex for a date", "code"), r"\d{4}-\d{2}-\d{2}")
     assert (v.verdict, v.basis) == ("PASS", "none")
+
+
+def test_code_in_values_is_code(tmp_path, monkeypatch):
+    """the executive said code and the reasoning lobe wrote the source as its value: the code path, not a vote"""
+    goal = 'def dbl(x):\n    """\n    >>> dbl(2)\n    4\n    """\n'
+    st, seen, _, _ = _run(tmp_path, monkeypatch, goal, {
+        "executive": [{"kind": "code", "needs_tool": False}],
+        "reasoning": [{"values": ["def dbl(x):\n    return 2 * x"], "program": None, "code": None}]})
+    assert st.task_class == "code" and seen == ["executive", "reasoning"] and st.basis == "evidence"
+    assert st.answer == "def dbl(x):\n    return 2 * x"
 
 
 def test_code_retry_carries_the_failure(tmp_path, monkeypatch):
     goal = 'implement this\n\ndef dbl(x):\n    """\n    >>> dbl(2)\n    4\n    """\n'
     st, seen, _, sent = _run(tmp_path, monkeypatch, goal, {"executive": [{"kind": "code", "needs_tool": True}],
-        "reasoning": [{"values": [], "check": None, "code": "def dbl(x):\n    return x"}, {"answer": "def dbl(x):\n    return 2 * x"}]},
+        "reasoning": [{"values": [], "program":None, "code": "def dbl(x):\n    return x"}, {"answer": "def dbl(x):\n    return 2 * x"}]},
         effort="low")
     assert st.task_class == "code" and seen == ["executive", "reasoning", "reasoning"] and st.retries == 1
     assert "rejected" in sent["reasoning"][1][-1]["content"] and "0/1" in sent["reasoning"][1][-1]["content"]
@@ -330,13 +354,12 @@ def test_eval_record(tmp_path, monkeypatch):
     cfg = config.load()
     cfg["_root"] = tmp_path
     replies = {"executive": {"kind": "math", "needs_tool": True}, "motor": _program("print(17*22)"),
-               "reasoning": {"values": ["391"], "check": "print(17*23)", "code": None},
-               "verifier": {"values": ["391"], "check": "print(17*23)", "code": None}, "language": {"answer": "391"}}
+               "reasoning": {"values": ["391"], "program":"print(17*23)", "code": None}, "language": {"answer": "391"}}
     monkeypatch.setattr(runner.Ctx, "chat", lambda self, state, lobe, messages, **kw: _reply(replies[lobe]))
     vram = type("V", (), {"peak": 0})()
     rec = ev.run_item(cfg, "D", 0, "tools", {"id": "t1", "prompt": "what is 17 * 23", "answer": "391"}, vram)
     assert rec["correct"] and rec["basis"] == "evidence" and rec["passed"] and not rec["stuck"] and rec["capped"] is None
-    assert [w[0] for w in rec["witnesses"]] == ["reasoning", "motor", "verifier"] and rec["agreed"] == 2 and rec["disagree"]
+    assert [w[0] for w in rec["witnesses"]] == ["reasoning", "motor", "reasoning"] and rec["agreed"] == 2 and rec["disagree"]
 
 
 def test_forced_answer(monkeypatch):
@@ -362,6 +385,32 @@ def test_forced_answer(monkeypatch):
     assert bodies[1]["max_tokens"] == 2500 and bodies[0]["max_tokens"] == 100
 
 
+def test_refused_think_answers_plain(tmp_path, monkeypatch):
+    """a thinking call the server refuses goes out again plain; a plain one refused is an error"""
+    import httpx
+    cfg = config.load()
+    cfg["_root"] = tmp_path
+    cfg["providers"]["fake"], cfg["models"]["m"] = {"base_url": "http://x"}, {"thinking": True}
+    monkeypatch.setattr(runner, "ModelManager", lambda cfg: None)
+    monkeypatch.setattr(runner.Ctx, "slot", lambda self, lobe: ("fake", "m"))
+    asked = []
+
+    def fake(provider, model, messages, *, thinking=None, max_tokens=2048, **kw):
+        asked.append((thinking, max_tokens))
+        if thinking:
+            raise httpx.HTTPStatusError("500", request=None, response=httpx.Response(500))
+        return _reply({"answer": "4"})
+    monkeypatch.setattr(runner.providers, "chat", fake)
+    ctx = runner.Ctx(cfg, "specialists", runner.Trace(tmp_path / "t.jsonl"), tmp_path)
+    st = runner.TaskState("t", "2+2", [])
+    r = ctx.chat(st, "perception", [{"role": "user", "content": "2+2"}], thinking=True, max_tokens=6000)
+    assert r.data == {"answer": "4"} and asked == [(True, 6000), (False, 2500)] and st.calls == [("perception", "fake/m", 1, 10)]
+    assert [json.loads(l)["kind"] for l in (tmp_path / "t.jsonl").read_text().splitlines()] == ["refused", "call"]
+    monkeypatch.setattr(runner.providers, "chat", lambda *a, **k: (_ for _ in ()).throw(httpx.HTTPStatusError("500", request=None, response=httpx.Response(500))))
+    with pytest.raises(httpx.HTTPStatusError):
+        ctx.chat(st, "perception", [{"role": "user", "content": "2+2"}], thinking=False)
+
+
 def test_hedge(tmp_path):
     from lobes.lobe import language
     ctx = FakeCtx(tmp_path, [])
@@ -371,6 +420,8 @@ def test_hedge(tmp_path):
     assert language.say(ctx, st).answer == language.HEDGE + "Alice"
     st.value = None
     assert language.say(ctx, st).answer == "Not sure."       # no witness gave a value: still say so, not an empty reply
+    st.value = "def f(x):\n    return x"
+    assert language.say(ctx, st).answer == st.value          # a hedge in front of code would not run
     st.value, st.basis = "Alice", "consistency"
     assert language.say(ctx, st).answer == "Alice"
 
@@ -379,6 +430,8 @@ def test_language_guard():
     from lobes.lobe.language import faithful
     assert faithful("17 x 23 = 391", "391", "what is 17 * 23") and not faithful("}54", "54", "how many")
     assert not faithful("97404784", "97405784", "what is 123456 * 789 minus 1000")
+    assert not faithful("The beanstalk was 10 inches tall after 3 weeks.", "10 inches", "how tall after 3 weeks")
+    assert faithful("After 3 weeks the beanstalk was 10 inches tall.", "10 inches", "how tall after 3 weeks")
     assert faithful("The capital of Australia is Canberra.", "Canberra", "capital of australia?")
     assert not faithful("The capital is Sydney.", "Canberra", "capital of australia?")
     assert faithful("Sum 27660, count 110.", "27660\n110", "sum and count") and not faithful("27660", "27660\n110", "sum and count")

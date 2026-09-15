@@ -51,3 +51,25 @@ lobes eval --conditions D --seeds 0 --workers 4 --effort high --tag 5090-v3-high
 # model-only classifier, granite-4.0-h-1b as executive and the language-lobe fixes. Box 2 before its v3 high.
 git checkout -q v2-fix
 lobes eval --conditions D --seeds 0 --workers 4 --effort high --tag 5090-v2fix-high > eval-v2fix-high.log 2>&1
+# 09-15 afternoon: the witness program field is called program, not check (12% of the programs defined check()
+# and never called it). Same boxes, same levels, new tags; the run above stays for the comparison.
+git checkout -q main
+lobes eval --conditions D --seeds 0 --workers 4 --tag 5090-v3-program > eval-v3-program.log 2>&1                      # box 1
+lobes eval --conditions D --seeds 0 --workers 4 --effort high --tag 5090-v3-program-high > eval-v3-program-high.log 2>&1   # box 2
+# Then the blind test on code without examples came out (REPORT, deviation 17). The code path is only entered on
+# humaneval, so those 30 items ran once more with that code into the same files; the first pass is kept next to them.
+git checkout -q main
+for t in 5090-v3-program 5090-v3-program-high; do
+  f=eval/results/$t/D-s0.jsonl; [ -f $f ] || continue
+  grep '"suite": "humaneval"' $f > eval/results/$t/humaneval-blind-test.jsonl && grep -v '"suite": "humaneval"' $f > $f.tmp && mv $f.tmp $f
+done
+lobes eval --conditions D --seeds 0 --workers 4 --suites humaneval --tag 5090-v3-program > eval-v3-program-he.log 2>&1                      # box 1
+lobes eval --conditions D --seeds 0 --workers 4 --effort high --suites humaneval --tag 5090-v3-program-high > eval-v3-program-high-he.log 2>&1   # box 2
+# 09-15 evening (REPORT, deviation 18): the verifier no longer votes, the token cap counts generated tokens, a pair
+# on an image must include perception, prose examples count for code. Both levels again, and the medium level a
+# second time with the same code so the run-to-run noise has a number. Before them box 1 ran the witness samples
+# behind those decisions: eval/exp.py; its exp-ocr.jsonl and exp-gsm.jsonl ship with the per-item records.
+git checkout -q main
+lobes eval --conditions D --seeds 0 --workers 4 --tag 5090-v3-witness > eval-v3-witness.log 2>&1                      # box 1
+lobes eval --conditions D --seeds 0 --workers 4 --effort high --tag 5090-v3-witness-high > eval-v3-witness-high.log 2>&1   # box 2
+lobes eval --conditions D --seeds 0 --workers 4 --tag 5090-v3-witness-2 > eval-v3-witness-2.log 2>&1                  # box 1, after the medium run

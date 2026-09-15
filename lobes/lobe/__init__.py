@@ -33,6 +33,11 @@ def lines(text):
     return [l.strip() for l in (text or "").splitlines() if l.strip()]
 
 
+def budget(ctx):
+    """Tokens a thinking call may generate: the effort's budget, else the context."""
+    return ctx.effort["budget"] or ctx.cfg.get("llama", {}).get("ctx", 16384)
+
+
 def _fields(v, k):
     """A witness that printed its values on one line, up to the k the other one printed."""
     if len(v) == 1 and k > 1:
@@ -62,15 +67,16 @@ def agree(a, b, goal=""):
     return all(_same(x, y, given) for x, y in zip(short, long[len(long) - len(short):]))
 
 
-def settle(witnesses, need, goal):
+def settle(witnesses, need, anchor, goal):
     """The first value that `need` witnesses share, with the basis a PASS on it would have. None until then.
-    Once a program ran, values models wrote cannot outvote it: the sharing witnesses must include one that ran.
-    The carried witness is one that ran, then the one that printed the most values."""
+    Once a program ran, values models wrote cannot outvote it: the sharing witnesses must include one that ran,
+    and one of lobe `anchor` when that is given. The carried witness is one that ran, then the one that printed
+    the most values."""
     live = [w for w in witnesses if w.value]
     ran = any(w.ran for w in live)
     for w in live:
         peers = [o for o in live if o is w or agree(w.value, o.value, goal)]
-        if len(peers) >= need and (not ran or any(o.ran for o in peers)):
+        if len(peers) >= need and (not ran or any(o.ran for o in peers)) and (not anchor or any(o.lobe == anchor for o in peers)):
             best = max(peers, key=lambda o: (o.ran, len(lines(o.value)), -live.index(o)))
             basis = "evidence" if any(o.ran for o in peers) else "consistency" if len(peers) > 1 else "none"
             return best, basis
