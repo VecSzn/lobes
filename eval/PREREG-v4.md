@@ -74,6 +74,19 @@ Nothing about the runtime changes for these items. No prompt, no lobe, no thresh
 tuned to any suite; the new items are written against `eval/suites/make.py`, which computes
 every expected value in code and never types one in, the same as the v3 items.
 
+## The baseline stays the model as shipped
+
+Condition A — the same 9B in every lobe slot, same tools, same witnesses — is in `lobes.yaml`
+and is deliberately not run for v4. What this project compares itself against is the model as
+you would actually run it, not an ablation of itself, so R keeps its v1 definition: one chat
+call, no lobes, no tools, no images.
+
+The cost of that choice is worth stating before the numbers exist rather than after. On tools,
+multistep and AIME the v4 gap does **not** separate what the architecture contributes from what
+having a python tool contributes. A gap on those suites means "this runtime against that model
+as shipped". It does not mean "six lobes against one brain", and nothing in the report may
+phrase it that way.
+
 ## How the noise is handled this time
 
 Medium runs twice, on the same box, back to back, with nothing touched in between. R and
