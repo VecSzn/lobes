@@ -1,6 +1,6 @@
 # Lobes 设计笔记
 
-2026-09-14，第一稿。想法是把几个小模型拼成一个「分区的脑子」，在一张 8G 的 4070 笔记本卡上跑。这篇先把原来的方案批一遍，再写我打算怎么做。
+2026-09-14，第一稿。想法是把几个小模型拼成一个「分区的脑子」，在一张 8G 的 4070 笔记本卡上跑。这篇先把原来的方案批一遍，再写我打算怎么做。09-15 按实际做出来的样子把过时的段落改了：第一稿怎么想的留着，后来没这么做的地方就地说明。
 
 ## 先说机器
 
@@ -28,7 +28,7 @@
 
 写到这里我一度想把六个模块砍成一个 4B 加一个 0.8B。后来觉得不对：砍的应该是**权重**，不是**模块**。合了模块，「脑区」这个东西就没了，剩下一个带验证循环的 4B，GitHub 上一抓一把。
 
-所以最后是这样：六个脑叶（lobe）全部保留，每个是独立模块，有自己的输入输出契约、schema 和日志。**谁来干活是配置，不是代码。** 每个 lobe 可以填一个专用小模型，可以和别的 lobe 共用一份权重，也可以直接指向远端 API。几个 lobe 还各有一个非 LLM 的实现：语言 lobe 有 `passthrough`（推理结果直接出）和 `llm`（改写）两种，验证 lobe 的证据检查本来就是代码。执行中枢原来有 `rules`（状态机）和 `llm`（规划器）两种，v3 之后只剩小模型分类这一件事（见 PREREG-v3），规则路由也拆掉了。
+所以最后是这样：六个脑叶（lobe）全部保留，每个是独立模块，有自己的输入输出契约、schema 和日志。**谁来干活是配置，不是代码。** 每个 lobe 可以填一个专用小模型，也可以和别的 lobe 共用一份权重（第一稿还留了远端 API 的槽，2026-09-14 晚上连 key 一起删了，见 DECISIONS）。几个 lobe 还各有一个非 LLM 的实现：语言 lobe 有 `passthrough`（推理结果直接出）和 `llm`（改写）两种，验证 lobe 的证据检查本来就是代码。执行中枢原来有 `rules`（状态机）和 `llm`（规划器）两种，v3 之后只剩小模型分类这一件事（见 PREREG-v3），规则路由也拆掉了。
 
 配置分两套 profile：`specialists` 每个 lobe 各用一家的模型，加起来远超 6.5G，所以换入换出是真的在跑；`shared` 几个 lobe 共用 4B，常驻不换，快。默认 `specialists`。评测直接比这两套加单个 9B，「专用小模型到底值不值」就变成实验结果而不是我拍脑袋。
 
@@ -44,53 +44,34 @@
 
 验证器不能单独给 PASS。PASS 必须有证据（执行通过、盲解一致、工具比对通过）。验证器只有否决权：RETRY、CONFLICT、VERIFY_WITH_TOOL。弱模型的否决很便宜，它的赞同一文不值，那就设计成赞同不重要。
 
-（v3 更正：上面三段是 v1/v2 的做法。5090 的 trace 说明「盲解」其实不盲：验证器看不到候选答案，但看得到执行叶的计划和按计划跑出的工具输出，答案就从那里回声回来；断言表也没人真的审。v3 把这一节换成一条规则：几个互相看不见的推导一致才算答案。推理叶先不开思考，按题问的顺序列出所求的值并交一个复算程序、motor 叶从题面写一个程序、验证器（gemma，另一个家族）在前两个不一致时盲解第三次，还不一致才让推理叶开思考再采 n 个样本，程序打印的就是该证人的值（一行一个），逐个值一致即定案；题要的是源码时推理叶交的是代码，走例子检查 / 盲测试（2026-09-15 起，原来 motor 先跑、只比最后一个数、代码路径由执行叶分流）。验证器只剩代码题的例子检查和盲测试，没有 RETRY / VERIFY_WITH_TOOL 循环。见 eval/PREREG-v3.md。）
+（v3 更正：上面三段是 v1/v2 的做法。5090 的 trace 说明「盲解」其实不盲：验证器看不到候选答案，但看得到执行叶的计划和按计划跑出的工具输出，答案就从那里回声回来；断言表也没人真的审。v3 把这一节换成一条规则：几个互相看不见的推导一致才算答案。推理叶开着思考，按题问的顺序列出所求的值并交一个复算程序；motor 叶从题面写一个程序，不思考；验证器（gemma，另一个家族，不思考）在前两个不一致时盲解第三次；还不一致就再抽推理叶的热样本，思考样本一共 n 个。程序打印的就是该证人的值（一行一个），逐个值一致即定案；有程序跑过之后，没跑程序的证人之间一致不算；JSON 解析失败的证人没有值。题要的是源码时推理叶交的是代码，走例子检查 / 盲测试。验证器只剩代码题的例子检查和盲测试，没有 RETRY / VERIFY_WITH_TOOL 循环。见 eval/PREREG-v3.md，和它的偏离记在 REPORT。09-15 上午试过推理叶先不思考、便宜的证人不一致才开思考：token 少三分之一，gsm8k 200 道掉 10 道，两段不思考的同家族程序会同读错一处，撤了，见 DECISIONS。）
 
-最后是校准。评测的时候记下每类任务上验证器的精确率和召回率，哪类任务上它不比抛硬币强就关掉。这其实就是整个项目要验证的假设的一部分。
+校准没做成第一稿写的样子：v3 里验证器不下判决，能记的是每个题库上定案靠 evidence / consistency / none 各占多少、各自翻错多少，在 REPORT 里。
 
-后面（V3）可以换个家族做裁判，gemma-4 或者 LFM2.5，跟 Qwen 的错误相关性低一些。
+换个家族做裁判这条做了：验证叶是 gemma-4-E2B。LFM2.5 没进任何槽，1.2B 分类不行，8B-A1B 没试。
 
-## 置信度、重试、升级
+## 置信度、重试
 
-模型自报的 0.0–1.0 不能单独信。真正能用的信号：断言的证据类别、同一题采样几次的一致率、验证器判决、约束枚举题上的 token 概率（llama-server 能返回 logprobs）。这几个合成一个分数。
+模型自报的 0.0–1.0 不用。置信度只有三档来源：evidence（定案的一对里有程序跑过，或代码过了例子 / 盲测试）、consistency（都没跑程序但一致）、none（定不了案，带 hedge 交出推理叶的值，前缀 Not sure，信封上的 confidence 是 self 0.5）。第一稿想用的 logprobs 没用上。
 
-重试必须改变点什么：新证据、不同温度或种子、不同提示框架、换模型。原样重跑一次没有意义。本地最多重试两次。
+重试只有两种，都带新东西：程序挂了带 stderr 修一次；代码题例子没过带失败原因重做一次。原样重跑没有。
 
-升级阶梯：4B 不带 thinking → 4B 带 thinking → 4B 采样三次投票 → 换入本地 9B → 远端 API。每一级记账。
+升级阶梯（4B 不带 thinking → 带 thinking → 采样投票 → 换入本地 9B → 远端 API）是 v1 的东西，2026-09-14 晚上删了：9B 只在评测里当基线，远端槽和 key 一起删了。`--effort auto` 只是证人用完就升一档、多抽几个样本，不换模型。
 
-两个模型不一致：先找有没有工具能裁决，没有就升级，升级也不可用就把分歧原样告诉用户。不强行给答案。
+证人不一致又没有证人可抽：把推理叶的值标上不确定交出去，别的证人的值列在 uncertainties 里。不强行给答案。
 
 ## 模块之间传什么
 
-一种信封，pydantic 定义，导出 JSON schema 给 llama-server 做约束。散文只允许出现在最终 answer 字段里。
+一种信封，pydantic 定义（schema.py），导出 JSON schema 给 llama-server 做约束。散文只允许出现在最终 answer 字段里。
 
-```json
-{
-  "task_id": "t_20260914_001", "step": 3,
-  "role": "solver", "model": "local/qwen3.5-4b",
-  "kind": "step_result",
-  "goal": "…",
-  "observations": [{"source": "tool:python", "ref": "art_2", "summary": "stdout: 42"}],
-  "claims": [
-    {"id": "c1", "text": "结果是 42", "support": "tool", "evidence": "art_2"},
-    {"id": "c2", "text": "对负数也成立", "support": "assumed", "evidence": null}
-  ],
-  "tool_calls": [{"name": "python", "args": {"code": "…"}}],
-  "answer": null,
-  "uncertainties": ["没测负数"],
-  "confidence": {"score": 0.7, "basis": "consistency"},
-  "next": {"action": "verify", "module": "verifier"},
-  "budget": {"tokens_in": 1830, "tokens_out": 412, "ms": 2900}
-}
+```
+Envelope   kind: step_result | final · goal · observations[source, ref, summary] · tool_calls[name, args]
+           answer · uncertainties[] · confidence{score, basis: self | consistency | evidence | logprob} · next{action: tool | answer}
+Witness    lobe · value（一行一个）· ran（值是程序打印的）· ref（tool_N）· note
+Verdict    verdict: PASS | RETRY | CONFLICT · basis: evidence | consistency | none · failed_claims · notes
 ```
 
-kind 是 plan / step_result / tool_result / verdict / final 之一，next.action 是 tool / verify / answer / retry / escalate 之一。验证器的输出更短（v3 起 kind 只剩 step_result / final，next.action 只剩 tool / answer，claims 删了；证人之间传的是 Witness(lobe, value, ran, ref)，不是信封）：
-
-```json
-{"verdict": "RETRY", "failed_claims": ["c2"],
- "proposed_check": {"tool": "python", "args": {"code": "assert f(-3) == …"}},
- "notes": "…"}
-```
+证人之间传的是 Witness，不是信封；Verdict 只有代码题的例子检查 / 盲测试和 settle 在填，basis 由代码填，模型填不了。第一稿里的 claims 断言表、plan / tool_result / verdict 三种 kind、verify / retry / escalate 三个动作和 budget 字段都删了，算账在 trace 里。
 
 ## 显存
 
@@ -128,7 +109,7 @@ Q4_K_M，f16 KV，16K 上下文：
 
 加载延迟见上表：热加载 1.5 到 4 秒（含 router 起子进程），卸载 0.7 秒左右，一次任务换三四个模型大约多花 10 秒。
 
-缓存策略：启动时把所有 GGUF 顺序读一遍钉进页缓存；模型管理器按显存预算而不是按个数做 LRU；验证器连续两次 CONFLICT 就提前开始加载 9B；共享的 system prompt 前缀靠 llama-server 自带的 prompt cache 复用。
+缓存策略：模型管理器按显存预算而不是按个数做 LRU，常驻的（executive）永不卸；GGUF 靠 mmap 进页缓存，交给操作系统，没有专门预读；共享的 system prompt 前缀靠 llama-server 自带的 prompt cache 复用。第一稿里「验证器连续两次 CONFLICT 就提前加载 9B」随升级一起删了。
 
 ## 选哪些模型
 
@@ -149,7 +130,7 @@ Qwen3.5-9B（IQ4_XS 5.17G）只在评测里当基线 R，运行时不用它。�
 
 `shared` 这套：executive 还是 granite-1b 在 CPU，perception 挂 4B 的 mmproj，reasoning / motor / language / verifier 全是 Qwen3.5-4B 换提示词，verifier 走盲解。常驻 4.6G 不换。
 
-Qwen3.5 的 thinking 用 `chat_template_kwargs: {enable_thinking: false}` 关，原生支持工具调用，上下文 262K。Nemotron 也有 reasoning on/off 两种模式。V3 想试的：LFM2.5-8B-A1B（Q4 5.16G，激活 1B）放 CPU 当第二意见；nomic-embed（本机已有）做记忆。
+Qwen3.5 的 thinking 用 `chat_template_kwargs: {enable_thinking: false}` 关，原生支持工具调用，上下文 262K。Nemotron 也有 reasoning on/off 两种模式。第一稿想在 V3 试的两样，LFM2.5-8B-A1B 放 CPU 当第二意见和 nomic-embed 做记忆，都没做；v3 做的是证人机制。
 
 不打算用的：xLAM-2 那类专用函数调用模型（2025 年 Llama-3.2 底子，有了语法约束之后没优势）；Transformers 加 bitsandbytes（Windows 8G 下比 GGUF 又慢又费显存）；vLLM（Windows 支持差）。模型名只出现在配置里，llama.cpp 的 README 里已经出现 Qwen 3.6 的字样了，到时候改配置就行。
 
@@ -163,75 +144,60 @@ Qwen3.5 的 thinking 用 `chat_template_kwargs: {enable_thinking: false}` 关，
 
 ## 代码怎么组织
 
-两个进程。llama-server router 模式一个，每个模型它自己起子进程。lobes 一个 Python 进程，V0 是 CLI，V1 变成常驻服务并对外开一个 OpenAI 兼容的 `/v1/chat/completions`，这样 Codex CLI、Open WebUI、VS Code 插件都能把 Lobes 当成一个模型来用。
+两个进程。llama-server router 模式一个（`lobes serve`），每个模型它自己起子进程。lobes 一个 Python 进程：CLI 有 install / serve / models / load / unload / ask / eval / api，`lobes api` 对外开一个 OpenAI 兼容的 `/v1/chat/completions`（:8090），这样 Codex CLI、Open WebUI、VS Code 插件都能把 Lobes 当成一个模型来用。
 
-接入其他 AI 的关键是 provider 这一层。一个接口：
+provider 这一层一个接口：
 
 ```
-chat(messages, schema=None, tools=None, images=None, thinking=False) -> Envelope
+providers.chat(provider, model, messages, *, schema=None, images=None, thinking=None, temperature, max_tokens, seed, ctx) -> Reply
 ```
 
-OpenAI 兼容的适配器一个就覆盖 llama-server 和 LM Studio，两个都在本机。配置长这样：
-
-```yaml
-providers:
-  local:     {type: openai, base_url: http://127.0.0.1:8080/v1}
-  lmstudio:  {type: openai, base_url: http://127.0.0.1:1234/v1}
-roles:
-  main: local/qwen3.5-4b
-  fast: local/qwen3.5-0.8b
-  verifier: local/qwen3.5-4b
-```
-
-`lobes providers test` 挨个打一下看通不通。
+OpenAI 兼容的适配器一个就覆盖 llama-server 和 LM Studio，两个都在本机；第一稿的 roles（main / fast / verifier）变成了 profile 里六个 lobe 各填一个 provider/model 或非 LLM 实现，见 lobes.yaml。`lobes providers test` 挨个打一下看通不通。
 
 模型管理器就是一张表：name、file、vram_est、resident、loaded、last_used。`ensure(name)`：没加载就按 LRU 卸非常驻的直到预算够，然后 `/models/load`，轮询到就绪。加载完读一次 nvidia-smi 把 vram_est 校准掉。
 
-路由器是个纯函数 `route(state)`，状态机：INTAKE → FAST 或 PLAN → ACT → TOOL → VERIFY → 回答 / 重试回 ACT / 再跑工具 / 升级后回 ACT。最多 8 步、2 次重试、1 次升级。（v3：INTAKE → FAST 或 LOOK → 证人逐个跑到两个一致 → 回答；推理叶第一个跑，它交回代码而不是值时转入 例子/盲测试 → 带失败原因重做。没有重试回路，单题有证人数、调用数、token、秒四个硬上限，见 runner.py 的 EFFORT 表。）
+第一稿的状态机（INTAKE → FAST 或 PLAN → ACT → TOOL → VERIFY → 回答 / 重试 / 升级）是 v1 跑的东西。现在 runner.py 是一条直线：执行叶分类（chat / code / math / qa，要不要程序）→ chat 由执行叶当场答；图片先让感知叶和 OCR 各读一遍，作为带来源的观察给证人 → 按 `_plan` 的顺序逐个叫证人，两个一致（闭卷 n 个连续一致）就停 → 语言叶措辞。推理叶交回代码而不是值时转入例子 / 盲测试，失败带原因重做一次。没有重试回路，单题有证人数、调用数、token、秒四个硬上限：
 
-档位表（runner.py 的 EFFORT，原来贴在 README）：
+| level  | thinking | think tokens | 思考样本 n | repairs | cap: witnesses | cap: calls | cap: tokens | cap: seconds |
+|--------|----------|--------------|-----------|---------|----------------|------------|-------------|--------------|
+| low    | off      | 0            | 1         | 1       | 4              | 8          | 6000        | 120          |
+| medium | on       | 6000         | 3         | 2       | 8              | 16         | 16000       | 300          |
+| high   | on       | 16000        | 5         | 3       | 12             | 24         | 40000       | 600          |
+| xhigh  | on       | 32000        | 8         | 4       | 18             | 36         | 80000       | 1200         |
+| max    | on       | ctx          | 12        | 6       | 30             | 60         | none        | none         |
 
-| level  | thinking | think tokens | witnesses | repairs | cap: calls | cap: tokens | cap: seconds |
-|--------|----------|--------------|-----------|---------|------------|-------------|--------------|
-| low    | off      | 0            | 3         | 1       | 8          | 6000        | 120          |
-| medium | on       | 6000         | 3         | 2       | 16         | 16000       | 300          |
-| high   | on       | 16000        | 5         | 3       | 24         | 40000       | 600          |
-| xhigh  | on       | 32000        | 8         | 4       | 36         | 80000       | 1200         |
-| max    | on       | ctx          | 12        | 6       | 60         | none        | none         |
+撞上限就带 hedge 交推理叶的值。思考撞 think tokens 上限时把思考截断、把已想的部分预填再要一次答案，所以一次被截断的思考样本在 token 账上记两遍（中档一个约 12.7k，高档约 32.8k）。5090 上中档 370 道有 27 道撞 token 上限、高档 21 道，全是四个证人四个值、第五个样本被截的题（REPORT 偏离 15）。xhigh 和 max 的 ctx 要比思考上限大。auto 从 medium 起，一档的证人用完还没定案就升 high、再 xhigh。
 
-撞上限就带 hedge 交推理叶的值。xhigh 和 max 的 ctx 要比思考上限大。auto 从 medium 起，一档的证人用完还没多数就升 high、再 xhigh。
+没有消息总线。单进程函数调用，每一步追加写到 `runs/<task_id>/trace.jsonl`（start / model / call / intake / tool / witness / doctest / best_of / verdict / effort / language_rejected / final）。多进程总线现在是过早设计。
 
-没有消息总线。单进程函数调用传信封，每个信封追加写到 `runs/<task_id>/trace.jsonl`。多进程总线现在是过早设计。
+任务状态一个对象（runner.State）：goal、观察、证人、工具结果、判决、代码、重试和 token 计数；trace 每步落盘。
 
-任务状态一个对象：goal、信封历史、产物、断言表、预算计数，每步落盘。
+工具是普通 Python 函数（tools.py），注册表导出 JSON schema 给运动叶做约束选择：`python`（子进程，10 秒超时，工作目录隔离）、`shell`（10 秒，删库类命令挡掉）、`read_file` / `write_file` / `edit_file`（只在工作目录里）、`web_fetch`（HTML 压成文本）、`screenshot`（交给感知叶）。真沙箱没做，Windows 上做不出来。
 
-工具就是带 pydantic 参数的 Python 函数，注册表导出 JSON schema 给主模型做约束选择。V0 只有 `python`（子进程，10 秒超时，工作目录隔离）和 `read_file`。Windows 上做不出真沙箱，V2 再考虑独立 venv 加 Job Object 或者 Docker。
+日志就是 trace.jsonl 加 rich 打到终端，每次 LLM 调用记 model、tokens、延迟，每次换模型记时间和 nvidia-smi。工具输出截断后原样进 trace，没有摘要模型；没有长期记忆，没有多轮。
 
-日志就是 trace.jsonl 加 rich 打到终端，每次 LLM 调用记 model、tokens、延迟、显存快照。上下文超长的工具输出交给 0.8B 摘要。V0 没有长期记忆。
-
-栈：Python 3.12，httpx、pydantic v2、typer、rich、pyyaml（python-dotenv 随远端一起删了）。V1 加 starlette 和 uvicorn（原打算 fastapi，两个端点用不上），评测加 pandas 和 pyarrow 读 parquet（原打算 datasets，太重）。不用 LangChain 和 LangGraph，它们把控制流藏起来，而控制流正是我要测的东西。llama.cpp 用 b10951 的 win-cuda-13.3 包（150M，cudart 另 391M，610 驱动支持 13.x）。
+栈：Python 3.12，httpx、pydantic v2、typer、rich、pyyaml、pillow；api 用 starlette 和 uvicorn（原打算 fastapi，两个端点用不上）；评测加 pandas 和 pyarrow 读 parquet（原打算 datasets，太重）；OCR 可选 rapidocr-onnxruntime。python-dotenv 随远端一起删了。不用 LangChain 和 LangGraph，它们把控制流藏起来，而控制流正是我要测的东西。llama.cpp 用 b10951：Windows 取 win-cuda-13.3 包（150M，cudart 另 391M，610 驱动支持 13.x），Linux 从源码编 llama-server。
 
 ```
 Lobes/
-  README.md  docs/ARCHITECTURE.md  lobes.yaml  pyproject.toml
-  lobes/   cli.py config.py providers.py schema.py models.py router.py runner.py verify.py log.py
-           tools/python_exec.py tools/files.py
-  presets/models.ini
-  scripts/install.py      下载 llama.cpp 和 GGUF
-  eval/    suites/ run_eval.py report.py
-  tests/   test_smoke.py
-  runs/  models/          不进 git
+  README.md  README.zh-CN.md  lobes.yaml  pyproject.toml
+  docs/    ARCHITECTURE.md  DECISIONS.md  img/
+  lobes/   cli.py config.py providers.py schema.py models.py runner.py tools.py install.py api.py eval.py
+           lobe/  executive.py perception.py reasoning.py motor.py verifier.py language.py
+  eval/    suites/（题库 jsonl，make.py 算 tools 和 multistep 的答案）  PREREG.md PREREG-v2.md PREREG-v3.md REPORT.md  plot.py pod.sh
+  tests/   test_lobes.py
+  runs/  models/  eval/results/      不进 git
 ```
 
-## 分几步做
+## 分几步做，实际走成了什么样
 
-V0：install 脚本，provider 层，schema，4B 加 0.8B，python 工具，盲解验证，CLI，评测骨架加 9B 基线。做完的标志是 `lobes ask "…"` 能跑，GSM8K 50 题、HumanEval 30 题、自己写的 20 个工具题上有 A/B 数字。
+第一稿排的是 V0（install、provider、schema、python 工具、盲解、CLI、9B 基线）→ V1（验证阶梯、升级到 9B 和远端、api）→ V2（视觉、更多工具、字面比对）→ V3（预测性预加载、异家族裁判、CPU 上跑 MoE、按类别关验证器、用 trace 微调 0.8B 当路由或裁判）。实际一天走了三版，见 README 的 Milestones 和 DECISIONS：
 
-V1：完整的验证阶梯（证据、盲解、一致性），重试策略，置信度合成，升级到 9B 和远端 API，常驻服务加 OpenAI 兼容端口。
+- v1（09-14 上午）：第一稿的 V0 加 V1 一口气做完，六个脑叶围着共享黑板，执行叶写计划，验证叶盲解，升级梯子和投票，api。4070 上跑，5090 上四个题库 74/90。
+- v2（下午）：读 v1 的 trace 改的，规则在 PREREG-v2：验证叶用题目自带的例子和盲写的测试，effort 档位表，每次调用换种子，思考撞上限强制作答，`--workers` 并行，每模型 ctx。高档 82/90 对 9B 的 84/90。
+- v3（晚上到 15 日）：黑板撤掉换成互相看不见的证人；执行叶换成 granite 1B 只做分类；梯子和远端槽删掉；一行一值逐行比；程序跑过的压不过；题库放大到 370 道。
 
-V2：视觉（mmproj 加截图工具），shell、文件编辑、网页抓取，工具输出和断言的字面比对。
-
-V3：按显存预算的 LRU 和预测性预加载，异家族裁判，CPU 上跑 MoE，按任务类别用评测数据决定验证器开关，用自己攒的 trace 微调 0.8B 当路由或裁判（Unsloth LoRA，8G 能做）。这是唯一一条能让「小专用模块」真的胜过「小通用模型换个提示词」的路。
+第一稿 V3 那串里做了的只有异家族裁判（验证叶 gemma）和按预算的 LRU。没做的：预测性预加载、CPU 上跑 MoE、按类别用评测数据关验证器、多轮记忆、并发、用自己攒的 trace 微调小模型。最后一条仍是「小专用模块」能真的胜过「小通用模型换个提示词」的唯一路径，这次没走到。
 
 ## 评测
 
@@ -239,35 +205,35 @@ V3：按显存预算的 LRU 和预测性预加载，异家族裁判，CPU 上跑
 
 最要紧的一点：语法约束、工具、重试这些脚手架不是 LLM，单模型也能用。基线必须拿到一模一样的脚手架，不然测出来的是脚手架的功劳，不是模块化的。
 
-条件：A 是 9B 加同样脚手架（同预算单模型），B 是 4B 加脚手架，C 是 B 加 0.8B，D 是 C 加验证阶梯，E 是 D 加动态升级到 9B（完整的 Lobes），F 是远端 API 当天花板。
+条件（eval.py 的 CONDITIONS）：R 是裸 9B，Qwen3.5-9B 原样一次调用、无工具无脑叶，这是 v3 起的尺子；A 是 9B 加同样脚手架，B 是 4B 加脚手架，B3 是 B 采样三次投票，C 是 `shared`（几个 lobe 共用 4B），D 是 `specialists`（完整的 Lobes）。第一稿的 E（动态升级到 9B）和 F（远端 API 天花板）随梯子和远端槽删了。5090 上跑全的只有 R 和 D；A/B/B3/C 在 4070 和 5090 早期跑过局部，数字在 REPORT。
 
-测什么：编码用 HumanEval+ 和 MBPP+ 子集看执行 pass@1；推理用 GSM8K、MATH-500 子集、GPQA-Diamond 子集；图像用 MMMU 子集、ChartQA、OCRBench 子集加自己截 20 张 UI 图；工具用 BFCL-v4 子集加自己写的 30 个真实多步任务，看调用合法率和成功率；幻觉用 SimpleQA 子集加断言标注，看无支持断言的比例和弃答率；任务完成用那 30 个多步任务人工二值判；延迟记 p50 p95 端到端和分阶段；显存用 nvidia-smi 每 100ms 采样取峰值；多步可靠性是同一批任务跑三个种子看方差和卡死循环率。
+题库：GSM8K 200、HumanEval 30、tools 30、multistep 30、SimpleQA 30、OCRBench 50（裸 9B 不看图，跑 320），一个种子，每台机四题并行。第一稿列的 MATH-500、GPQA、MMMU、ChartQA、BFCL、MBPP+ 和自己截的 UI 图都没上；三个种子和置信区间也没跑到，一趟 370 道中档在 5090 上要两个半小时，高档更久。每题记 token、秒、证人数、定案依据，报每题 token 和每题秒。假设和阈值在跑之前写死在 eval/PREREG.md、PREREG-v2.md、PREREG-v3.md 里，文件冻结，偏离记在 REPORT。
 
-每个条件至少三个种子，报置信区间。同时报每千 token 准确率和每秒准确率，并且给单模型同等算力的 self-consistency 多次采样，不然很容易变成「模块化只是多花了三倍 token」。跑之前把假设和阈值写死在 eval/PREREG.md 里。
+跑完的账（09-15，5090，每台四题并行，裸 9B 跑的 320 道）：v3 中档 261 对裸 9B 268，每题 token 8,981 对 13,436、秒 37.7 对 62.2；高档 267 对 268，token 14,375、秒 65.0。分题库：tools 两档都 30/30 对 25，multistep 25 平，GSM8K 177 / 182 对 184，HumanEval 27 / 28 对 29，SimpleQA 2 对 5（弃答 22 / 26，答错 5 / 3 对 9B 的 25），OCRBench 30/50（裸 9B 不看图）。上面那句"买到的是可靠性和成本控制，不是智力"：成本这半句在中档成立，高档不成立（token 反超 7%）；可靠性这半句只成立弃答那一截，一致判定没有校准出来——gsm8k 前两个证人一致时对 93%，不是 PREREG-v3 要的 97%，一致错的都是两个证人同读错一处题面；智力那半句如预期不成立，GSM8K 还是 9B 自己强。PREREG-v3 八条假设六条不成立，逐条在 REPORT。
 
 ## 别人做过的
 
 最像的是 HuggingGPT（2023，LLM 当控制器调度专家模型）和 Mixture-of-Agents（2024）。NVIDIA 2025 有篇「Small language models are the future of agentic AI」讲的就是这个方向。模型级的级联和路由有 FrugalGPT、RouteLLM，speculative decoding 也是小大配对的思路。验证这块：Cobbe 2021 的 GSM8K verifier，Let's Verify Step by Step 的过程奖励模型，CRITIC 用工具做批评，Self-Refine、Reflexion，self-consistency，Zheng 2023 讲 LLM 裁判的偏差，Burns 2023 的 weak-to-strong，Du 2023 的多智能体辩论。工具这块 ReAct、Toolformer、PAL、Gorilla 和 BFCL。认知架构有 Minsky 的 Society of Mind、ACT-R、SOAR、Global Workspace、CoALA。MoE（Switch、Mixtral）是 token 级网络内联合训练的路由，跟这里的模块级路由不是一个层面。「compound AI systems」是 BAIR 2024 给这类东西起的名字，最贴切。
 
-老实说脑区这个比喻有个漏洞：脑区是一起训练出来的，有共享表征；我这几个模型不是，中间传的是有损的文本。所以真正能分的区只有感知（ViT）、语言和推理（LLM）、运动（工具执行）、执行控制（状态机）、还有随叫随到的更大的脑（升级）。V3 拿自己的 trace 去微调小模型，才算是往真正的分区走了一步。
+老实说脑区这个比喻有个漏洞：脑区是一起训练出来的，有共享表征；我这几个模型不是，中间传的是有损的文本。所以真正能分的区只有感知（ViT）、语言和推理（LLM）、运动（工具执行）、执行控制（分类器）。「随叫随到的更大的脑」删了。拿自己的 trace 去微调小模型才算往真正的分区走一步，这次没做。
 
-## 最后定的 V0
+## 现在的样子
 
 ```
-用户 → executive（LFM2.5 在 CPU，规则 + 小模型）
-          ├─ 小问题：自己答，完事
-          └─ 否则：拆步 →
-               perception（Qwen3.5-2B，有图才进）
-               reasoning（Qwen3.5-4B，按 schema 出断言 / 工具请求）
-               motor（granite，把工具请求变成合法调用）→ python 工具 → 代码做证据比对
-               verifier（gemma，证据检查 + 盲解）→ PASS / RETRY / VERIFY_WITH_TOOL / CONFLICT
-               language（gemma，把信封写成人话；shared 下是 passthrough）
-               CONFLICT → 换入 9B 或远端 API
-v3 的同一张图：executive 只分流不写计划；能算的题 reasoning 先不思考（所求的值 + 复算程序，题要源码就交代码）
-→ motor（从题面写一个程序）逐个值一致就定案，不一致 verifier（gemma）盲解第三次，再不一致抽推理叶热样本到
-档位上限；图片题 perception 直接答 + OCR 文本包含 + reasoning 读描述作答；闭卷题推理叶不思考采 n 个样本，连续 n 个一致才算；便宜的证人不一致才开思考，再采 n 个。
-证人只看题面（和带来源的图片观察），看不到彼此。
+用户 → executive（granite 1B 在 CPU，只分类：chat / code / math / qa，要不要程序）
+          ├─ chat：自己答，完事
+          ├─ 图片：perception（Qwen3.5-2B）描述一遍、OCR 引擎读一遍，作为带来源的观察给证人
+          └─ 其余：证人逐个上，两个一致就停，看不到彼此
+               reasoning（Qwen3.5-4B，思考）：所求的值 + 复算程序；题要源码就交代码 → 例子 / 盲测试
+               motor（granite h-micro，不思考）：从题面写一个程序，输出就是值
+               verifier（gemma E2B，不思考）：前两个不一致时盲解第三次
+               reasoning 热样本：思考样本一共 n 个（中档 3，高档 5）
+               闭卷题：只有推理叶，n 个样本连续一致才算
+               language（gemma；shared 下 passthrough）：只管措辞，代码检查保住每个数字每一行
+               定不了案：交推理叶的值，标上不确定
 模型管理器按显存预算 LRU 换入换出，每次换都记时间和 nvidia-smi
 ```
 
-选它的理由：六个脑叶都在，每个是真的独立模块，权重各家各用，换入换出是常态而不是摆设，这才是最初想做的东西。同时每个 lobe 都能在 yaml 里换成共用权重、非 LLM 实现或远端 API，所以「专业化值不值」是跑出来的数字，不是信仰。验证靠执行、字面比对和盲解，弱裁判附和的问题结构上就不存在。评测把脚手架和模块化分开，能真的回答「模块化到底买到了什么」。
+第一稿定的 V0 图（执行叶 LFM2.5 规则加小模型写计划、motor 把工具请求变成合法调用、verifier 下 PASS / RETRY / VERIFY_WITH_TOOL / CONFLICT、CONFLICT 换入 9B 或远端 API）就是 v1 跑的东西，为什么一样样换掉在上面各节和 DECISIONS 里。
+
+留着六个脑叶的理由没变：每个是真的独立模块，权重各家各用，换入换出是常态而不是摆设，这才是最初想做的东西。同时每个 lobe 都能在 yaml 里换成共用权重或非 LLM 实现，所以「专业化值不值」是跑出来的数字，不是信仰。答案靠互相看不见的推导一致和程序输出，弱裁判附和的问题结构上就不存在。评测拿裸 9B 当尺子，能真的回答「六个小模型到底买到了什么」。

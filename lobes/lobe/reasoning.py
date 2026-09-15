@@ -47,7 +47,7 @@ def witness(ctx, state, lobe="reasoning", *, thinking=None, temperature=0.2):
         # the model thinks past the budget on some items and returns nothing; a plain answer beats none
         r = ctx.chat(state, lobe, msgs, schema=schema, thinking=False, temperature=temperature, max_tokens=2500)
     if r.data is None:
-        return Witness(lobe, r.text.strip()[:2000] or None, note="no json")
+        return Witness(lobe, None, note="no json")
     raw = [r.data.get("answer")] if vision else r.data.get("values") or []
     values = [str(v).strip() for v in raw if v and str(v).strip()]
     check, code = _text(r.data.get("check")), _text(r.data.get("code"))

@@ -16,7 +16,7 @@ from .lobe import Witness, agree, settle
 from .models import ModelManager
 from .schema import Verdict
 
-EFFORT = {   # think: thinking on, budget: its token cap, n: thinking samples after the cheap witnesses, retries: program repairs
+EFFORT = {   # think: thinking on, budget: its token cap, n: thinking samples of the reasoning lobe, retries: program repairs
     #          per witness, then the caps per item: witnesses (steps), model calls, tokens, seconds. None: no cap
     "low":    dict(think=False, budget=0,     n=1,  retries=1, steps=4,  calls=8,  tokens=6000,  seconds=120),
     "medium": dict(think=True,  budget=6000,  n=3,  retries=2, steps=8,  calls=16, tokens=16000, seconds=300),
@@ -169,25 +169,24 @@ def capped(ctx, state):
 
 
 def _plan(ctx, state):
-    """Who derives the answer, in order, as (lobe, callable). Thinking stays closed until the cheap witnesses
-    disagree: the reasoning lobe plain first (it may hand back code), motor, the verifier; closed book, n plain
-    samples. Only then the reasoning lobe with thinking on, n samples, the loop stopping as soon as enough agree."""
+    """Who derives the answer, in order, as (lobe, callable). The reasoning lobe goes first, thinking as the effort
+    says (it may hand back code); motor and the verifier answer plain; then hot samples of the reasoning lobe up
+    to n thinking samples in all, the loop stopping as soon as enough agree."""
     from .lobe import motor, perception, reasoning
     n = ctx.effort["n"]
 
     def rw(**kw):
         return lambda: reasoning.witness(ctx, state, **kw)
 
-    heat = [0.2] + [0.7] * (n - 1)
+    first = ("reasoning", rw(temperature=0.2))
     if state.task_class == "vision":
-        cheap = [("perception", lambda: perception.ask(ctx, state)), ("reasoning", rw(thinking=False))]
+        plan = [("perception", lambda: perception.ask(ctx, state)), first]
     elif state.needs_tool:
-        cheap = [("reasoning", rw(thinking=False)), ("motor", lambda: motor.witness(ctx, state)),
-                 ("verifier", rw(lobe="verifier", thinking=False))]
+        plan = [first, ("motor", lambda: motor.witness(ctx, state)), ("verifier", rw(lobe="verifier", thinking=False))]
     else:
-        cheap = [("reasoning", rw(thinking=False, temperature=t)) for t in heat]
-    think = [("reasoning", rw(temperature=t)) for t in heat] if ctx.effort["think"] else []
-    return [(lobe, fn) for lobe, fn in cheap + think if ctx.is_model(lobe)]
+        plan = [first]
+    plan += [("reasoning", rw(temperature=0.7))] * (n - 1)
+    return [(lobe, fn) for lobe, fn in plan if ctx.is_model(lobe)]
 
 
 def _need(ctx, state):

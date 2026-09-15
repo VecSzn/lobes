@@ -31,7 +31,7 @@ def test_python_tool_unescapes_one_liners(tmp_path):
 def test_agree_and_settle():
     assert verifier.same("The answer is 42.", "42") and verifier.same("1,000", "1000.0")
     assert not verifier.same("42", "43") and not verifier.same("Paris", "Berlin")
-    assert verifier.same("a", "a") and not verifier.same("a", "the")
+    assert verifier.same("a", "a") and not verifier.same("a", "the") and not verifier.same("e", "wrote 71 chars to s.txt")
     assert not verifier.restates("print(s[::-1])", "1") and verifier.restates("print(391)", "391")
     assert not verifier.restates("pow(3, 100, 1000000)", "522001")
     goal = "20 footballs cost 5 each, how many and what total?"
@@ -50,6 +50,9 @@ def test_agree_and_settle():
     assert settle(ws[:2], 2, goal) is None
     assert settle([ws[2]], 1, goal) == (ws[2], "none")
     assert settle([Witness("a", "Alice"), Witness("b", "Alice")], 2, "who")[1] == "consistency"
+    g = "solve for x: 5x - 3 = 2x + 21"       # two model-written 7s do not outvote the program that printed 8
+    assert settle([Witness("r", "7"), Witness("v", "x = 7"), Witness("m", "8", ran=True)], 2, g) is None
+    assert settle([Witness("r", "7"), Witness("v", "x = 7")], 2, g)[1] == "consistency"
 
 
 class FakeRouter:
@@ -165,15 +168,15 @@ def test_third_witness_breaks_a_tie(tmp_path, monkeypatch):
 
 
 def test_no_majority_is_hedged(tmp_path, monkeypatch):
-    """the cheap witnesses disagree, so the reasoning lobe gets to think, n samples; still nothing agrees"""
+    """reasoning thinks, motor and the verifier answer plain, two hot samples fill n; still nothing agrees"""
     from lobes.lobe import language
     n = iter(range(391, 400))
     st, seen, _, _ = _run(tmp_path, monkeypatch, "what is 17 * 23", {
         "motor": [_program("print(17*22)")],
         "reasoning": lambda m: {"values": [str(next(n))], "check": None, "code": None},
         "verifier": [{"values": ["400"], "check": None, "code": None}]})
-    assert seen == ["executive", "reasoning", "motor", "verifier", "reasoning", "reasoning", "reasoning"]
-    assert [m for lobe, m, *_ in st.calls if lobe == "reasoning"] == ["fake", "fake/think", "fake/think", "fake/think"]
+    assert seen == ["executive", "reasoning", "motor", "verifier", "reasoning", "reasoning"]
+    assert [m for lobe, m, *_ in st.calls if lobe in ("reasoning", "verifier")] == ["fake/think", "fake", "fake/think", "fake/think"]
     assert st.verdicts[-1].verdict == "CONFLICT" and st.basis == "none"
     assert st.answer == language.HEDGE + "391" and len(st.uncertainties) == 3
 
@@ -199,7 +202,7 @@ def test_auto_climb(tmp_path, monkeypatch):
         "reasoning": lambda m: {"values": [str(next(n))], "check": None, "code": None},
         "verifier": [{"values": ["392"], "check": None, "code": None}]}, effort="auto")
     assert [t["level"] for t in trace if t["kind"] == "effort"] == ["high", "xhigh"] and st.effort == "xhigh"
-    assert len(st.witnesses) == 3 + runner.EFFORT["xhigh"]["n"] and seen.count("reasoning") == 9
+    assert len(st.witnesses) == 2 + runner.EFFORT["xhigh"]["n"] and seen.count("reasoning") == runner.EFFORT["xhigh"]["n"]
     assert st.verdicts[-1].verdict == "CONFLICT" and st.answer == language.HEDGE + "1000"
 
 
@@ -223,7 +226,7 @@ def test_closed_book_unanimity(tmp_path, monkeypatch):
     st, seen, _, _ = _run(tmp_path, monkeypatch, "who wrote it", {
         "executive": [exe], "reasoning": lambda m: {"values": ["Alice" if next(k) % 2 == 0 else "Bob"], "check": None, "code": None},
         "language": [{"answer": "Alice"}]})
-    assert seen.count("reasoning") == 6 and st.basis == "none" and st.answer == language.HEDGE + "Alice"
+    assert seen.count("reasoning") == 3 and st.basis == "none" and st.answer == language.HEDGE + "Alice"
     assert runner.effort({"effort": "auto"}) is runner.EFFORT["medium"]
     with pytest.raises(ValueError):
         runner.effort({"effort": "ultra"})
@@ -366,7 +369,9 @@ def test_hedge(tmp_path):
     st = _state("who wrote it", "qa")
     st.value = "Alice"
     assert language.say(ctx, st).answer == language.HEDGE + "Alice"
-    st.basis = "consistency"
+    st.value = None
+    assert language.say(ctx, st).answer == "Not sure."       # no witness gave a value: still say so, not an empty reply
+    st.value, st.basis = "Alice", "consistency"
     assert language.say(ctx, st).answer == "Alice"
 
 

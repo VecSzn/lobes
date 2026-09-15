@@ -10,67 +10,64 @@ with no scaffolding at all?
 ## Scores
 
 One RTX 5090, seed 0, the same items for every line, four items in flight on each box.
-Bare 9B is Qwen3.5-9B as shipped, one call per item, no tools. v3 is this runtime with
-the `specialists` profile at effort medium. Suites appear as their runs finish: SimpleQA,
-OCRBench and multistep for v3, the high run, and the second version with the v3 intake
-are still going.
+Bare 9B is Qwen3.5-9B as shipped, one call per item, no tools, no images. v3 is this
+runtime with the `specialists` profile, at effort medium and at high. The charts also
+carry v2, the second version at high with the v3 intake.
 
 ![correct per suite, higher is better](docs/img/suites.svg)
 
 ![tokens and seconds per item, lower is better](docs/img/cost.svg)
 
-| suite | bare 9B | v3, medium | tokens per item, 9B | tokens, v3 | seconds per item, 9B | seconds, v3 |
-|---|---|---|---|---|---|---|
-| GSM8K, 200 | 184 | 181 | 10,924 | 6,805 | 51 | 31 |
-| HumanEval, 30 | 29 | 28 | 15,786 | 6,893 | 76 | 32 |
-| tools, 30 | 25 | 27 | 15,176 | 8,572 | 72 | 36 |
-| those three, 260 | 238 | 236 | 11,976 | 7,019 | 56 | 31 |
+| suite | bare 9B | v3, medium | v3, high | tokens per item, 9B | medium | high | seconds per item, 9B | medium | high |
+|---|---|---|---|---|---|---|---|---|---|
+| GSM8K, 200 | 184 | 177 | 182 | 10,924 | 6,557 | 8,176 | 51 | 27 | 37 |
+| HumanEval, 30 | 29 | 27 | 28 | 15,786 | 8,382 | 16,114 | 76 | 37 | 74 |
+| tools, 30 | 25 | 30 | 30 | 15,176 | 7,809 | 17,311 | 72 | 34 | 74 |
+| multistep, 30 | 25 | 25 | 25 | 19,182 | 16,659 | 26,408 | 88 | 70 | 121 |
+| SimpleQA, 30 | 5 | 2 | 2 | 20,349 | 19,237 | 38,989 | 86 | 79 | 177 |
+| OCRBench, 50 | no images | 30 | 30 | | 8,925 | 12,909 | | 41 | 49 |
+| the 320 the 9B runs | 268 | 261 | 267 | 13,436 | 8,981 | 14,375 | 62 | 38 | 65 |
 
 The point of the split was the same answers for fewer tokens and less time, from models
-an 8 GB laptop GPU can hold. On the three suites in so far that is 41% fewer tokens and
-44% less time for two items out of 260, and more correct on tools. Of the 19 GSM8K
-misses, 12 are items the 9B misses too. The item-level reading, the witness statistics
-and the pre-registered hypotheses are in [eval/REPORT.md](eval/REPORT.md); the rules were
+an 8 GB laptop GPU can hold. At medium it is seven items behind the 9B on 320, for 33%
+fewer tokens and 39% less time; at high it is one item behind, for 7% more tokens and
+4% more time. Tools is the suite the split wins outright, 30/30 at both levels against
+25/30. GSM8K is where it loses: 11 of high's 18 misses are items the 9B misses too, and
+the rest are mostly two witnesses agreeing on the same misreading. SimpleQA is a hedge
+test: the 9B answers all 30 and is wrong on 25; v3 abstains on 22 (26 at high) and is
+wrong on 5 (3). The item-level reading, the witness statistics and the pre-registered
+hypotheses, six of eight failed, are in [eval/REPORT.md](eval/REPORT.md); the rules were
 written down before any run, in [eval/PREREG.md](eval/PREREG.md) and
 [eval/PREREG-v3.md](eval/PREREG-v3.md).
 
 ## Milestones
 
-![each version against the bare 9B of its ruler, higher is better](docs/img/milestones.svg)
+![each version against the bare 9B on the 320 items it runs, higher is better](docs/img/milestones.svg)
 
-All on 2026-09-14, in order. The first three are on the first suite sizes, one item at a
-time; v3 is on the enlarged suites, and the two rulers are not comparable with each other.
+2026-09-14 and 15, in order. Every number is on the items of the table above.
 
-- **v1**, morning. Six lobes around a shared blackboard: the executive writes a plan,
-  motor runs tools, reasoning answers, the verifier re-solves blind, language words
-  it. Built and run on the 4070; on the 5090 it scored 74/90 on the four suites the
-  9B runs. Tag `v1-4070`.
+- **v1**, 09-14 morning. Six lobes around a shared blackboard: the executive writes a
+  plan, motor runs tools, reasoning answers, the verifier re-solves blind, language
+  words it. Built and run on the 4070. Tag `v1-4070`.
 - **v2**, afternoon. Fixes from reading the v1 traces, rules in
-  [eval/PREREG-v2.md](eval/PREREG-v2.md). 78/90 at medium.
-- **v2 at effort high: 82/90 against the 9B's 84/90, on 60% of its tokens and 73% of
-  its seconds.** Tools 20/20 against 18/20, the first suite where the split beat the
-  single model. HumanEval 26 against 27, GSM8K 27 against 29, multistep 9 against 10.
+  [eval/PREREG-v2.md](eval/PREREG-v2.md). 234/320 at medium, with the 1.2B classifier
+  it shipped with (tag `pre-v3`).
+- **v2 at high with the v3 intake: 241/320, tools 29/30 against the 9B's 25/30, the
+  first suite where the split beat the single model.** Multistep 17/30 against 25/30,
+  at 20,000 tokens an item. Branch `v2-fix`.
 - **v3**, evening. The blackboard goes: every witness gets the goal and nothing another
   witness produced, and two that agree settle it
   ([eval/PREREG-v3.md](eval/PREREG-v3.md)). The 1.2B executive, which classified 157
   of 341 test prompts, gives way to a 1B Granite that gets 330.
-- **v3 at medium on the enlarged suites, three suites in: 236 against the 9B's 238 on
-  59% of its tokens and 56% of its seconds, tools 27/30 against 25/30.** The rest of the
-  suites and the high run are still going.
-
-The second version on the first suite sizes, for the record:
-
-| suite | bare 9B | v2, medium | v2, high |
-|---|---|---|---|
-| GSM8K | 29/30 | 27/30 | 27/30 |
-| HumanEval | 27/30 | 24/30 | 26/30 |
-| tools | 18/20 | 18/20 | 20/20 |
-| multistep | 10/10 | 9/10 | 9/10 |
-| SimpleQA | 2/30 | 3/30 | 2/30 |
-| OCRBench | no images | 12/20 | 12/20 |
-| the four the 9B runs | 84/90 | 78/90 | 82/90 |
-| tokens per item, those four | 12,279 | 3,763 | 7,426 |
-| seconds per item, those four | 32 | 11 | 24 |
+- **v3 at medium: 261 against the 9B's 268 on 67% of its tokens and 61% of its seconds;
+  tools 30/30 against 25/30, multistep 25 against 25.** Reading its traces on 09-15
+  changed the contract five times (one value per line, a program that ran cannot be
+  outvoted, the reasoning lobe thinking from its first sample); each version's partial
+  run is kept and read in [eval/REPORT.md](eval/REPORT.md), deviations 13 to 15.
+- **v3 at high: 267 against 268 on 107% of the 9B's tokens and 104% of its seconds;
+  GSM8K 182 against 184, HumanEval 28 against 29, tools 30 against 25, multistep 25
+  against 25.** What the split buys is medium: the same answers minus seven for two
+  thirds of the tokens. What it does not buy is a better GSM8K than the 9B on its own.
 
 ## Models
 
@@ -101,11 +98,11 @@ flowchart TD
   G(["goal"]) --> E["executive: chat or work, and would a program help"]
   E -->|chat| F["executive answers on the spot"] --> L
   E -->|image| P["perception describes it and an OCR engine reads it, then perception and reasoning answer"] --> A
-  E -->|a program would help| R["reasoning, no thinking yet: lists the values asked for, hands over a program that recomputes them one per line"]
+  E -->|a program would help| R["reasoning, thinking on: lists the values asked for, hands over a program that recomputes them one per line"]
   R -->|the goal wants source| C["that code, run by the task's own examples or a blind test, one redo with the failure attached"] --> L
   R -->|values| M["motor: one program from the goal alone, its output is the value"] --> A{"agree, value by value? two of them, or all of them when nothing ran"}
-  E -->|closed book| Q["reasoning answers 3 times (5 at high) without seeing itself, no thinking"] --> A
-  A -->|no, witnesses left| V["one more: the verifier from another family solves it blind, then reasoning with thinking on, 3 samples (5 at high)"] --> A
+  E -->|closed book| Q["reasoning answers 3 times (5 at high) without seeing itself"] --> A
+  A -->|no, witnesses left| V["one more: the verifier from another family solves it blind without thinking, then hot samples of reasoning up to 3 in all (5 at high)"] --> A
   A -->|yes| L["language: wording only, a code check keeps every number and line"] --> ANS(["answer"])
   A -->|no, witnesses used up| H["reasoning's value, marked not sure"] --> L
 ```
@@ -114,9 +111,11 @@ Each witness gets the goal (and, for images, what perception and the OCR engine 
 labelled) and nothing another witness produced. A value is one line per thing the goal
 asks for, in that order, and two witnesses agree when every line matches (one that
 printed intermediates first only has to match on its tail). Two that agree settle it:
-`evidence` when one of them ran a program, `consistency` when neither did; a
-closed-book answer needs three samples in a row to agree. Thinking stays off until the cheap witnesses
-disagree. A program that dies gets one repair with its own stderr and that is all. `--effort
+`evidence` when one of them ran a program, `consistency` when neither did, and once any
+program has run, values models wrote cannot outvote it; a closed-book answer needs three
+samples in a row to agree. The reasoning lobe thinks; motor and the verifier answer
+plain, because two plain programs from the same family misread a question the same
+way and agreed on the wrong number ten times in two hundred. A program that dies gets one repair with its own stderr and that is all. `--effort
 low|medium|high|xhigh|max|auto` scales thinking, witness count, repairs and the
 per-item caps; the table is in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 

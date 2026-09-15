@@ -41,7 +41,7 @@ def say(ctx, state):
             answer = out
         elif out:
             ctx.trace.write("language_rejected", text=out[:500])   # the rewrite lost a value; keep the draft
-    if answer and state.route != "fast" and state.task_class != "code" and state.basis == "none":
-        answer = HEDGE + answer    # nothing backs it: say so where the user (and the SimpleQA judge) can see it
+    if state.route != "fast" and state.task_class != "code" and state.basis == "none":
+        answer = HEDGE + answer if answer else HEDGE.split(".")[0] + "."   # nothing backs it: say so where the user (and the SimpleQA judge) can see it
     return Envelope(kind="final", goal=state.goal, answer=answer, uncertainties=unc,
                     confidence=confidence(state), next=Next(action="answer"))

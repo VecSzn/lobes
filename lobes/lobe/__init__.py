@@ -64,11 +64,13 @@ def agree(a, b, goal=""):
 
 def settle(witnesses, need, goal):
     """The first value that `need` witnesses share, with the basis a PASS on it would have. None until then.
+    Once a program ran, values models wrote cannot outvote it: the sharing witnesses must include one that ran.
     The carried witness is one that ran, then the one that printed the most values."""
     live = [w for w in witnesses if w.value]
+    ran = any(w.ran for w in live)
     for w in live:
         peers = [o for o in live if o is w or agree(w.value, o.value, goal)]
-        if len(peers) >= need:
+        if len(peers) >= need and (not ran or any(o.ran for o in peers)):
             best = max(peers, key=lambda o: (o.ran, len(lines(o.value)), -live.index(o)))
             basis = "evidence" if any(o.ran for o in peers) else "consistency" if len(peers) > 1 else "none"
             return best, basis

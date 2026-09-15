@@ -39,9 +39,9 @@ def same(a, b):
     a, b = norm(a) or (a or "").strip().lower(), norm(b) or (b or "").strip().lower()   # "a" is a value too
     if not a or not b:
         return False
-    if a == b or a in b or b in a:
-        return True
     ta, tb = set(a.split()), set(b.split())
+    if ta <= tb or tb <= ta:   # whole words: "e" is not in "wrote 71 chars"
+        return True
     return len(ta & tb) / len(ta | tb) >= 0.5
 
 
@@ -162,7 +162,7 @@ if __name__ == "__main__":
     assert restates("print(391)", "391") and restates("x = 1,234\nprint(x)", "1234") is False
     assert not restates("print(17*23)", "391") and not restates("print(3910)", "391") and not restates("print(3.91)", "391")
     assert not restates("print(s[::-1])", "1") and not restates("pow(3, 100, 1000000)", "522001")
-    assert same("a", "a") and not same("a", "the")
+    assert same("a", "a") and not same("a", "the") and not same("e", "wrote 71 chars to s.txt") and same("new york", "new york city")
     assert _blame('File "<string>", line 2, in <module>\nNameError', 5) == "candidate"
     assert _blame('File "<string>", line 9, in <module>\nNameError', 5) == "test"
 

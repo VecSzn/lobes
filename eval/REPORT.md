@@ -24,8 +24,8 @@ tables. PREREG.md is the contract; this file says what actually happened.
    llama.cpp then returns the same text for every sample at the same temperature. Every vote in
    v1 was three identical samples (131 of 131 votes on the 4070, 108 of 110 on the 5090), so
    "three samples and a vote" was one sample. The v1 numbers stand as run. The fix (seed +
-   call index, commit 6c2a145) went into v2 before its 5090 runs; the 44 v2 items already
-   run without it were discarded and rerun.
+   call index) went into v2 before its 5090 runs; the 44 v2 items already run without it
+   were discarded and rerun.
 6. Condition R was added after the 5090 runs started: the 9B as shipped, one chat call per
    item at the runner's cold-sample temperature and seed, thinking at the template default,
    12000-token cap, no tools, no images (so no ocrbench). The prompt gets one extra line asking
@@ -52,21 +52,56 @@ tables. PREREG.md is the contract; this file says what actually happened.
    ocrbench-610 twice; the second record was dropped.
 10. v3 (PREREG-v3.md): the executive changed after the pre-registration. The 1.2B classified
     157 of 341 labelled prompts at best, so the rules it needed were removed (the model
-    classifies alone, 0f218c1) and the slot went to granite-4.0-h-1b, which gets 330 (4a98642).
-    The labelled prompts are not eval items. The v3 D medium run and 89 items of D high had
-    already finished on the earlier code (d947c71); they are kept as `5090-v3-d947c71` and
-    `5090-v3-high-d947c71` (277/370 at medium, 13 of the 17 tools misses were tool tasks filed
-    as code) and both conditions ran again on main.
+    classifies alone) and the slot went to granite-4.0-h-1b, which gets 330. The labelled
+    prompts are not eval items. The v3 D medium run and 89 items of D high had already
+    finished on the earlier code; they are kept as `5090-v3-old-intake` and
+    `5090-v3-high-old-intake` (277/370 at medium, 13 of the 17 tools misses were tool tasks
+    filed as code) and both conditions ran again on main.
 11. Every v3 line ran with `--workers 4`, four items in flight on one box. Seconds are wall time
     under that contention for R and D alike, so they compare with each other and not with the
     v2 tables above, which ran one item at a time. Tokens and correctness do not depend on it.
     The pods also carry `threads: 8` and a 65536 context for the reasoning model (`eval/pod.sh`).
 12. A line not in the PREREG table: the second version at high on the enlarged suites with the
-    same intake fix, branch `v2-fix` (1d778d1 = fc7ff7e plus the model-only classifier, the
-    granite executive and the language-lobe fixes), tag `5090-v2fix-high`, so that the v2 high
+    same intake fix, branch `v2-fix` (that runtime plus the model-only classifier, the granite
+    executive and the language-lobe fixes), tag `5090-v2fix-high`, so that the v2 high
     milestone has a new-ruler number. `5090-pre-v3` stays the old classifier as pre-registered.
-13. The v3 section below was written while D medium was at 275 of 370 items and D high at 39.
-    It covers the finished suites only and is replaced when the runs end.
+13. The v3 D medium run that finished on 09-14 (`5090-v3-last-number`, all 370 items: gsm8k 181,
+    humaneval 28, tools 27, simpleqa 2, ocrbench 30, multistep 19) compared values on their
+    last number only. Its multistep traces (19 against the 9B's 25) showed two contract holes
+    rather than item noise: five "write the file, then report" tasks were filed as code by the
+    executive and the item delivered source; and a motor program that printed one value fewer
+    than asked still "agreed" with the reasoning lobe on the last number. The contract changed:
+    a value is one line per asked quantity, in order; agreement is line by line; the code path
+    is entered only when the reasoning lobe hands over source, the executive's label no longer
+    routes there. Replaying the 370 recorded answers under the new judge moved four verdicts,
+    all misses. Found on the way: granite writes newlines as a literal `\n` inside JSON, and a
+    one-line program starting with a `#` comment compiles with everything after the comment
+    swallowed; 23 of the 33 empty motor outputs on gsm8k were that. D medium and D high ran
+    again on the new contract; R and the second version did not need to.
+14. Between that and the shipped code the v3 tree changed five more times on 09-15, each after
+    reading the first 60 items (multistep, tools) of a run. The partial runs are kept:
+    `5090-v3-values` (one value per line, reasoning thinking first: multistep 24, tools 12 of
+    12 then stopped, 13.1k tokens and 53 s an item), `5090-v3-cheap-first` (the reasoning lobe
+    thinks only when three plain witnesses disagree: multistep 23, tools 28, 8.0k / 2.7k
+    tokens; two judge bugs found here, `same()` emptied "a" to nothing and `restates()` took
+    the goal's own numbers for a program's output), `5090-v3-cheap-first-2` (those fixed:
+    multistep 25, tools 27, gsm8k 89/101; tools-34 lost to two plain witnesses agreeing on a
+    value a program had refuted), `5090-v3-settle` (a program that ran cannot be outvoted by
+    written values, and no JSON means no value: multistep 23, tools 29, gsm8k 169/198 against
+    179 for the last-number run and 183 for the 9B on the same items, 4.6k tokens an item;
+    nine of the ten lost gsm8k items are the reasoning and motor lobes, both plain, misreading
+    the same clause and agreeing on the same wrong number), `5090-v3-settle-words` (`same()`
+    on whole words after "e" matched "wrote 71 chars"; 113 items, stopped when the next change
+    landed). The choice put to the user was tokens or accuracy; accuracy won. The shipped code
+    has the reasoning lobe thinking from its first sample again, `n` thinking samples in all,
+    with the settle rule, the line contract and the whole-word match kept. PREREG-v3's "two
+    that agree settle it" so carries one more clause: once any program ran, the agreeing pair
+    must include one that ran. The account, run by run, is in docs/DECISIONS.md.
+15. The per-item token caps (16000 at medium, 40000 at high) were sized while the reasoning
+    lobe thought only on disagreement. With thinking first, a sample that runs out of its
+    thinking budget costs about 12.7k tokens (its reasoning goes back in as prompt for the
+    forced answer), so medium holds one such sample and the cap ends an item at its fourth or
+    fifth witness. Cap hits are counted in the tables below and were not rerun.
 
 ## Quick timing (seed 0-2 mixed, 3 items per suite, not part of the results)
 
@@ -256,51 +291,110 @@ On the same v1 code, seed and items, the 4070 and the 5090 differ by 17 points o
 30-item suite moves 3.3 points per item. Read any difference under about 15 points in this
 report as inside that band unless it points the same way in every condition.
 
-### 5090, v3 against the 9B alone on the enlarged suites, seed 0 (running)
+### 5090, v3 against the 9B alone on the enlarged suites, seed 0
 
 Same items, same boxes as deviation 9, four workers each (deviation 11). R is the 9B as
-shipped, one call per item (deviation 6). D is v3 at medium on `main` after the executive
-change (deviation 10). Finished suites only; simpleqa, ocrbench and multistep follow.
+shipped, one call per item (deviation 6). D medium and D high are v3 as it ships, the
+contract of deviations 13 to 15, results `5090-v3` and `5090-v3-high`; the fourth line is
+branch `v2-fix` at high (deviation 12), results `5090-v2fix-high`. The 9B takes no images,
+so it has no ocrbench.
 
-| suite | n | R correct | D correct | R tokens | D tokens | R s | D s | R forced | D forced |
-|-----------|-----|-----|-----|-------|------|------|------|----|----|
-| gsm8k     | 200 | 184 | 181 | 10924 | 6805 | 51.1 | 30.5 | 73 | 41 |
-| humaneval | 30  | 29  | 28  | 15786 | 6893 | 76.1 | 32.4 | 15 | 7  |
-| tools     | 30  | 25  | 27  | 15176 | 8572 | 72.0 | 36.4 | 15 | 12 |
-| the three | 260 | 238 | 236 | 11976 | 7019 | 56.4 | 31.4 | | |
+| suite | n | R | D medium | D high | v2-fix high |
+|-----------|-----|-----|-----|-----|-----|
+| gsm8k     | 200 | 184 | 177 | 182 | 167 |
+| humaneval | 30  | 29  | 27  | 28  | 27  |
+| tools     | 30  | 25  | 30  | 30  | 29  |
+| multistep | 30  | 25  | 25  | 25  | 17  |
+| simpleqa  | 30  | 5   | 2   | 2   | 1   |
+| ocrbench  | 50  |     | 30  | 30  | 32  |
+| the 320 R runs | 320 | 268 | 261 | 267 | 241 |
+| all 370   | 370 |     | 291 | 297 | 273 |
 
 Tokens are prompt plus completion over every call of the item, means; seconds are means of
-wall time. Medians: gsm8k R 5562 tokens and 42 s, D 5302 and 27 s; humaneval R 17642 and 91 s,
-D 3646 and 21 s; tools R 18085 and 93 s, D 5969 and 33 s. "Forced" counts items where a
-thinking call ran out of budget and was made to answer (deviation 7): for R the 12000 cap,
-for D the medium 6000. Longest D item: gsm8k 69 s, humaneval 137 s, tools 86 s; 5 of the 260
-took over 60 s. D hit a per-item cap twice (tokens, both humaneval).
+wall time under four workers.
 
-Over the three suites D is two items behind R on 59% of its tokens and 56% of its seconds.
-Item by item on gsm8k: D misses 19, R 16, and 12 are the same items (962 among them, wrong
-in every condition since v1). D alone misses 7, R alone 4. On humaneval both miss
-145; D also misses 65. On tools nothing overlaps: R misses 21, 22, 23, 33, 49; D misses 29, 39
-and 44, all three tool tasks the executive filed as code, which the code path then runs as an
-implementation with no witness. That is the same failure as the 13 at d947c71, down from 11 of
-the old 30 to 3.
+| suite | R tokens / s | D medium | D high | v2-fix high |
+|-----------|--------------|--------------|--------------|--------------|
+| gsm8k     | 10924 / 51.1 | 6557 / 27.5  | 8176 / 37.0  | 15604 / 54.5 |
+| humaneval | 15786 / 76.1 | 8382 / 36.8  | 16114 / 74.5 | 17051 / 72.3 |
+| tools     | 15176 / 72.0 | 7809 / 33.5  | 17311 / 74.1 | 11781 / 36.5 |
+| multistep | 19182 / 88.0 | 16659 / 70.3 | 26408 / 120.7 | 20197 / 72.9 |
+| simpleqa  | 20349 / 86.1 | 19237 / 78.6 | 38989 / 177.2 | 33547 / 106.2 |
+| ocrbench  |              | 8925 / 40.9  | 12909 / 49.3 | 36095 / 125.4 |
+| the 320   | 13436 / 62.2 | 8981 / 37.7  | 14375 / 65.0 | 17494 / 61.1 |
 
-How the witnesses behaved on gsm8k, the suite with enough items to say: the first two
-(motor, reasoning) agreed on 121 of 200 and were right on 116 of those; a third witness was
-drawn 79 times and settled 8 more; 73 items ended with no majority and went out as the
-reasoning lobe's value with "not sure" in front, and 59 of those 73 were right. Of the 127
-items settled on evidence, 122 are right (96.1%); the 5 wrong ones are 962, 823, 1016, 711
-and 1195, four of them wrong for the 9B too. The disagreement comes mostly from the motor
-lobe: its program printed nothing on 33 of 200 items, 31 of them among the 73 with no
-majority. The reasoning lobe was forced out of its 6000-token thinking budget on 41 items,
-22 of them among the 79 that needed a third witness.
+Medians are well under the means everywhere: gsm8k R 5562 tokens and 42 s, D medium 3882
+and 17 s, D high 3394 and 13 s; humaneval R 17642 and 91 s, medium 4947 and 30 s, high 3864
+and 25 s; tools R 18085 and 93 s, medium 5797 and 35 s, high 6864 and 40 s. The means are
+carried by the items that disagree and draw witnesses. "Forced" counts items where a
+thinking call ran out of its budget and was made to answer (deviation 7): R 147 of 320
+(the 12000 cap), D medium 128 of 370 (6000), D high 92 (16000), v2-fix 49. "Capped" counts
+items that hit the per-item token cap between witnesses (deviation 15): medium 27 of 370
+(gsm8k 5, humaneval 4, multistep 7, simpleqa 9, ocrbench 2; 5 of the 27 right), high 21
+(gsm8k 5, humaneval 2, multistep 3, simpleqa 11; 3 right), v2-fix none. The cap is checked
+between witnesses, so a capped item ends past it: medium 16149 to 28296 tokens against
+16000, high 40142 to 89787 against 40000. Longest items: R 119 s, 167 of 320 over 60 s;
+medium gsm8k-186 at 129 s, 79 of 370 over 60 s; high HumanEval-145 at 450 s, 116 over 60 s.
 
-Early reads of PREREG-v3, to be written up properly when the runs end: W2 holds so far
-(181 against 184, one point down, within the 2 allowed; 1252 and 413 are among the 200 and
-right, both hedged). W3 holds on gsm8k and tools; W4 fails on the longest item (137 s at medium, under
-four workers) and holds on caps (2 of 260 under the 2%); W5 fails on the rate (first two
-disagree on 39.5%, not under 25%) and misses on the precision by one item (96.1% against
-97%), and the mechanism reading is above: the agreed-and-wrong items are the gold-disputed
-ones, the disagreement is the motor lobe returning nothing; W8 holds (28 against 26).
+On the 320 items the 9B runs, D medium is seven behind on 67% of its tokens and 61% of its
+seconds; D high is one behind on 107% of its tokens and 104% of its seconds. High costs
+more than medium on every suite (gsm8k 1.25x the tokens, humaneval 1.9x, tools 2.2x,
+multistep 1.6x, simpleqa 2.0x): the thinking budget is 16000 instead of 6000, and a forced
+sample is about 32.8k tokens instead of 12.7k because the thinking is sent back as prompt.
+Simpleqa at high is the worst case, 177 s an item, because a closed-book item needs three
+samples in a row to agree and five are drawn before it gives up.
+
+Item by item. gsm8k: medium misses 23, R 16, 10 shared; medium alone misses 13, R alone 6
+(1071, 1166, 1185, 641, 711, 93). High misses 18, 11 shared with R; high alone 7 (1056,
+1070, 298, 353, 380, 611, 943), R alone 5 (1071, 1166, 1185, 652, 781). 962 is wrong in
+every condition since v1. High fixes 10 of medium's misses and breaks 5. humaneval: all
+three miss 145; medium also 125 and 163, high also 125. tools: R misses 21, 22, 23, 33 and
+49, v3 none at either level, and the three tool tasks the executive filed as code in the
+last-number run (29, 39, 44, deviation 13) are right. multistep: R misses 13, 16, 18, 27 and
+14; medium misses 14, 11, 20, 31, 37; high misses 14, 15, 31, 35, 37. simpleqa: R answers
+all 30 and is wrong on 25; medium abstains on 22, answers wrong on 5, gives an empty answer
+on 2, is right on 2 (one of them hedged); high abstains on 26, is wrong on 3, right on 2.
+ocrbench: 30 of 50 at both levels, the same 20 misses; v2-fix 32, `pre-v3` 33.
+
+What the high misses look like, from the traces. multi-15: both programs take the same year
+off by one and agree. multi-35: two forced thinking samples of 32.8k tokens each end in
+placeholder values. gsm8k-298: the reasoning lobe's program prints 400, motor's 350, the
+verifier prints the running totals 200 to 400 and its tail matches 400, gold 500. gsm8k-1056
+and 711: the reasoning lobe writes a program whose `def check()` is never called, so nothing
+is printed and its written value stands in; on 711 that value and the verifier agree on 4
+(gold 6), on 1056 the first sample's 156 is right but finds no partner and two hot samples
+agree on 104. None of these is a contract hole; they are two witnesses reading the same
+words the same way.
+
+How the witnesses behaved on gsm8k, the suite with enough items to say. Medium: the first
+two (reasoning thinking, motor plain) agreed on 132 of 200 and were right on 123 of those
+(93.2%); a third witness or more was drawn 68 times and those ended right 54 times; 10 items
+ended with no majority and went out as the reasoning lobe's value with "not sure" in front,
+5 of them right. Of the 190 items settled on evidence, 172 are right (90.5%). Witness count
+per item: two on 132, three on 8, four on 51, five on 9; the reasoning lobe was called 269
+times, motor 200, the verifier 68. Motor's program printed nothing on 9 items (33 in the
+last-number run before the granite `\n` fix, deviation 13). Forced out of the 6000-token
+thinking budget on 39 items, 19 of them among the 68 that drew a third witness. By pair:
+motor's program and the reasoning lobe's program settled 107 (100 right; the 7 wrong are
+962, 823, 1016, 494, 652, 12, all wrong for the 9B too, and 752); motor's program and a
+written reasoning value 30 (28 right; 943, 1247 wrong); two reasoning programs 21 (19);
+a written value and a reasoning program 20 (18); a program and the verifier 8 (4 right);
+nothing agreed on 11 (5 right). Re-settling the recorded witnesses with only the first
+three (no hot samples) gives 170 instead of 177: the hot samples fixed 7 and broke none.
+
+High: the first two agreed on 125 (120 right, 96.0%); a third or more was drawn 75 times
+(62 right); no majority 8 (5 right). Evidence 190 items, 176 right (92.6%); two settled on
+consistency, one right. Two witnesses on 125, three 9, four 54, five 7, six 2, seven 3
+(five thinking samples plus motor and the verifier). Motor printed nothing on 14, forced 22. Pairs: two programs 98 (91 right),
+motor's program and a written value 32 (31), two reasoning programs 24 (24), a written
+value and a reasoning program 25 (20), a program and the verifier 8 (7), a written value
+and the verifier 1 (0, that is 711), nothing 9 (6). First three only: 179 instead of 182,
+the hot samples fixed 4 and broke 1.
+
+Tools and multistep at medium: on tools the first two agreed on 27 of 30 and every one was
+right, the other 3 settled on a later witness, also right. On multistep the first two agreed
+on 11 (10 right), 17 drew more (14 right), 7 ended with no majority (3 right); the thinking
+budget was hit on 23 of 30 items, which is why multistep costs 16659 tokens at medium.
 
 ## Which hypotheses held
 
@@ -336,6 +430,41 @@ On the 5090, v1 vs v2 (PREREG-v2.md V1-V5), seed 0.
 - V5 (v1 on the 5090 within 5 points of v1 on the 4070): fails, by up to 20 points on
   30-item suites with the same code and seed. As pre-registered, the v1 vs v2 comparison
   above uses the 5090 numbers only, and that band is the error bar for every table here.
+
+On the 5090, v3 against the 9B alone (PREREG-v3.md W1-W8), seed 0, v3 at medium unless
+said. Six of the eight fail.
+
+- W1 (multistep and tools each at least 10 points over R, and v3 the right one more often
+  when exactly one is right): tools holds, 30 against 25 is 16.7 points, and the five
+  items where exactly one is right are all v3's. multistep fails, 25 against 25; the eight
+  items where exactly one is right split four and four.
+- W2 (gsm8k not below R minus 2 points; 1252 and 413 right): fails at medium, 177 against
+  184 is 3.5 points down. 1252 and 413 are right at both levels. High, 182 against 184,
+  would be inside the 2 points, but the hypothesis named medium.
+- W3 (tokens and seconds below R on gsm8k, multistep, tools and simpleqa; below
+  `5090-v2-high` on every suite): the first half holds on all four suites, tokens and
+  seconds both. The second half fails: on the items the two runs share (the first 30 of
+  gsm8k, humaneval, simpleqa, the first 20 of ocrbench; the tools and multistep items were
+  replaced), gsm8k is 6897 against 5024 and simpleqa 19237 against 15286; humaneval 8382
+  against 8697 and ocrbench 9239 against 16773 are below.
+- W4 (no item exceeds the medium caps, at most 2% hit one, longest under 60 s): fails on
+  all three. 27 of 370 hit the token cap (7.3%), and because the cap is checked between
+  witnesses every one of them ended past it, up to 28296 against 16000. The longest item
+  is 129 s and 79 items are over 60 s, under four workers.
+- W5 (first two witnesses agreed are right 97% of the time, disagreement under 25%):
+  fails on both. The first two agreed on 132 of 200 (disagreement 34%) and were right on
+  123 (93.2%). The mechanism, as the prereg asked: of the 9 agreed-and-wrong items, 6 are
+  wrong for the 9B too (962, 823, 1016, 494, 652, 12), so those are the question read
+  the same way by every model, gold-disputed or a standard misreading, not a shared bug of
+  the two programs; the other 3 (752, 943, 1247) are motor's program agreeing with the
+  reasoning lobe on a wrong value, twice on the tail of a longer printout. The witnesses are independent on arithmetic and on code
+  slips and not on how they read the words, because they read the same words. At high the
+  first two agree on 125 (disagreement 37.5%) and are right on 120 (96.0%), still short.
+- W6 (ocrbench at or above `pre-v3` D, and 5 points above the single 4B on the first 20):
+  fails, 30 against 33, and 10 against 11 on the first 20.
+- W7 (simpleqa unsupported not above `pre-v3` D, confident correct not below it by more
+  than one): holds, unsupported 5 against 18, confident correct 1 against 2.
+- W8 (humaneval within 2 items of v2 D high, 26/30): holds, 27, and 28 at high.
 
 ## Things I noticed while judging
 

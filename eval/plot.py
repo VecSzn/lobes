@@ -15,14 +15,11 @@ N = {"gsm8k": 200, "humaneval": 30, "tools": 30, "multistep": 30, "simpleqa": 30
 SERIES = [("bare 9B", "5090-v3", "R"),
           ("v3, medium", "5090-v3", "D"),
           ("v3, high", "5090-v3-high", "D"),
-          ("v2 with the v3 intake, high", "5090-v2fix-high", "D")]
-# the milestones, one panel per ruler, each against the bare 9B measured on that ruler
-OLD = dict(n={"gsm8k": 30, "humaneval": 30, "tools": 20, "multistep": 10}, nine=("5090-v2", "R"),
-           title="first suite sizes, one item at a time",
-           rows=[("v1", "5090-v1", "D"), ("v2, medium", "5090-v2", "D"), ("v2, high", "5090-v2-high", "D")])
-NEW = dict(n={k: v for k, v in N.items() if k != "ocrbench"}, nine=("5090-v3", "R"),
-           title="enlarged suites, four items in flight", rows=SERIES[1:])
-COLORS = ["#7a7a7a", "#4c72b0", "#dd8452", "#55a868"]
+          ("v2, high", "5090-v2fix-high", "D")]   # the second version with the v3 intake, branch v2-fix
+# the milestones, on the items the 9B runs and against it; v2 medium is the second version as pre-registered
+MILE = [("v2, medium", "5090-pre-v3", "D"), ("v2, high", "5090-v2fix-high", "D"),
+        ("v3, medium", "5090-v3", "D"), ("v3, high", "5090-v3-high", "D")]
+COLORS = ["#7a7a7a", "#4c72b0", "#dd8452", "#55a868", "#8172b3"]
 
 
 def load(tag, cond):
@@ -60,10 +57,11 @@ def suites():
             if s in d:
                 x = j + (i - (len(runs) - 1) / 2) * w
                 ax.bar(x, acc(d[s]), w, color=COLORS[i], label=label)
-                ax.text(x, acc(d[s]) + 1, count(d[s]), ha="center", fontsize=6.5)
+                ax.text(x, acc(d[s]) + 1, count(d[s]), ha="center", va="bottom", rotation=90, fontsize=6.5)
                 label = None
     ax.set_xticks(range(len(N)), N)
-    ax.set_ylim(0, 105)
+    ax.set_ylim(0, 128)
+    ax.set_yticks(range(0, 101, 20))
     ax.set_ylabel("correct %  (higher is better)")
     ax.legend(frameon=False, ncol=len(runs), loc="lower center", bbox_to_anchor=(0.5, 1.0))
     ax.spines[["top", "right"]].set_visible(False)
@@ -83,35 +81,35 @@ def cost():
             ax.text(v, i, f" {v:,.0f}", va="center", fontsize=8)
         ax.set_yticks(range(len(runs)), [label for label, _ in runs])
         ax.invert_yaxis()
-        ax.set_title(f"{title}, mean over {', '.join(shared)}  (lower is better)", fontsize=8)
+        ax.set_title(title, fontsize=9)
         ax.set_xlim(0, ax.get_xlim()[1] * 1.15)
         ax.locator_params(axis="x", nbins=6)
         ax.xaxis.set_major_formatter(matplotlib.ticker.StrMethodFormatter("{x:,.0f}"))
         ax.spines[["top", "right"]].set_visible(False)
+    fig.suptitle(f"mean over {', '.join(shared)}  (lower is better)", fontsize=8)
     fig.tight_layout()
     return fig
 
 
 def milestones():
-    fig, axes = plt.subplots(1, 2, figsize=(10, 2.6))
-    for ax, ruler in zip(axes, (OLD, NEW)):
-        nine = done(*ruler["nine"], ruler["n"])
-        runs = [(label, done(tag, cond, ruler["n"])) for label, tag, cond in ruler["rows"]]
-        runs = [(label, d) for label, d in runs if d]
-        shared = common([d for _, d in runs] + [nine])
-        for i, (label, d) in enumerate(runs):
-            rs = [r for s in shared for r in d[s]]
-            ax.barh(i, acc(rs), color=COLORS[1 + i % 3])
-            ax.text(acc(rs) + 0.5, i, count(rs), va="center", fontsize=8)
-        rs = [r for s in shared for r in nine[s]]
-        ax.axvline(acc(rs), color=COLORS[0], ls="--")
-        ax.text(acc(rs) - 0.5, len(runs) - 0.35, f"bare 9B {count(rs)} ", color=COLORS[0], fontsize=8, ha="right", va="center")
-        ax.set_yticks(range(len(runs)), [label for label, _ in runs])
-        ax.set_ylim(len(runs) - 0.1, -0.6)
-        ax.set_xlim(0, 100)
-        ax.set_title(ruler["title"], fontsize=9)
-        ax.set_xlabel(f"correct % on {', '.join(shared)}  (higher is better)", fontsize=8)
-        ax.spines[["top", "right"]].set_visible(False)
+    fig, ax = plt.subplots(figsize=(6.5, 2.6))
+    n = {k: v for k, v in N.items() if k != "ocrbench"}
+    nine = done("5090-v3", "R", n)
+    runs = [(label, done(tag, cond, n)) for label, tag, cond in MILE]
+    runs = [(label, d) for label, d in runs if d]
+    shared = common([d for _, d in runs] + [nine])
+    for i, (label, d) in enumerate(runs):
+        rs = [r for s in shared for r in d[s]]
+        ax.barh(i, acc(rs), color=COLORS[1 + i])
+        ax.text(acc(rs) + 0.5, i, count(rs), va="center", fontsize=8)
+    rs = [r for s in shared for r in nine[s]]
+    ax.axvline(acc(rs), color=COLORS[0], ls="--")
+    ax.text(acc(rs) - 0.5, len(runs) - 0.35, f"bare 9B {count(rs)} ", color=COLORS[0], fontsize=8, ha="right", va="center")
+    ax.set_yticks(range(len(runs)), [label for label, _ in runs])
+    ax.set_ylim(len(runs) - 0.1, -0.6)
+    ax.set_xlim(0, 100)
+    ax.set_xlabel(f"correct % on {', '.join(shared)}, four items in flight  (higher is better)", fontsize=8)
+    ax.spines[["top", "right"]].set_visible(False)
     fig.tight_layout()
     return fig
 
