@@ -28,7 +28,7 @@
 
 写到这里我一度想把六个模块砍成一个 4B 加一个 0.8B。后来觉得不对：砍的应该是**权重**，不是**模块**。合了模块，「脑区」这个东西就没了，剩下一个带验证循环的 4B，GitHub 上一抓一把。
 
-所以最后是这样：六个脑叶（lobe）全部保留，每个是独立模块，有自己的输入输出契约、schema 和日志。**谁来干活是配置，不是代码。** 每个 lobe 可以填一个专用小模型，可以和别的 lobe 共用一份权重，也可以直接指向远端 API。几个 lobe 还各有一个非 LLM 的实现：执行中枢有 `rules`（状态机）和 `llm`（小模型规划器）两种，语言 lobe 有 `passthrough`（推理结果直接出）和 `llm`（改写）两种，验证 lobe 的证据检查本来就是代码。
+所以最后是这样：六个脑叶（lobe）全部保留，每个是独立模块，有自己的输入输出契约、schema 和日志。**谁来干活是配置，不是代码。** 每个 lobe 可以填一个专用小模型，可以和别的 lobe 共用一份权重，也可以直接指向远端 API。几个 lobe 还各有一个非 LLM 的实现：语言 lobe 有 `passthrough`（推理结果直接出）和 `llm`（改写）两种，验证 lobe 的证据检查本来就是代码。执行中枢原来有 `rules`（状态机）和 `llm`（规划器）两种，v3 之后只剩小模型分类这一件事（见 PREREG-v3），规则路由也拆掉了。
 
 配置分两套 profile：`specialists` 每个 lobe 各用一家的模型，加起来远超 6.5G，所以换入换出是真的在跑；`shared` 几个 lobe 共用 4B，常驻不换，快。默认 `specialists`。评测直接比这两套加单个 9B，「专用小模型到底值不值」就变成实验结果而不是我拍脑袋。
 
@@ -112,7 +112,8 @@ Q4_K_M，f16 KV，16K 上下文：
 
 | 模型 | 显存 MB | 热加载 ms | 卸载 ms | 生成 tok/s |
 |---|---|---|---|---|
-| lfm2.5-1.2b（CPU 常驻） | 0 | | | 77 |
+| lfm2.5-1.2b（CPU 常驻，已换掉） | 0 | | | 77 |
+| granite-1b Q8_0（CPU 常驻） | 0 | | | 22 |
 | qwen3.5-2b + mmproj | 2542 | 3609 | 655 | 119 |
 | qwen3.5-4b | 3396 | 2351–4056 | 675 | 62 |
 | qwen3.5-4b + mmproj | 4262 | 3199 | 672 | 62 |
@@ -135,19 +136,20 @@ Q4_K_M，f16 KV，16K 上下文：
 
 | lobe | 模型 | 家 | 文件 | 放哪 |
 |---|---|---|---|---|
-| executive 执行中枢 | LFM2.5-1.2B-Instruct | Liquid | Q4_K_M 0.73G | CPU 常驻，永不卸载 |
+| executive 执行中枢 | granite-4.0-h-1b（原定 LFM2.5-1.2B，341 条分类题最多对 157，换了，见 DECISIONS） | IBM | Q8_0 1.56G | CPU 常驻，永不卸载 |
 | perception 感知 | Qwen3.5-2B + mmproj | Qwen | 1.28G + 0.67G | GPU 换入 |
 | reasoning 推理 | Qwen3.5-4B | Qwen | Q4_K_M 2.74G | GPU 换入 |
 | motor 工具 | granite-4.0-h-micro | IBM | Q4_K_M 1.94G | GPU 换入 |
 | language 语言 | gemma-4-E2B-it | Google | Q4_K_M 3.11G | GPU 换入 |
 | verifier 验证 | gemma-4-E2B-it（原定 Nemotron-3-Nano-4B，盲解答出标点，换了，见 DECISIONS） | Google | 同上 | GPU 换入 |
-| escalate 升级 | Qwen3.5-9B / 远端 API | | IQ4_XS 5.17G | 全卸了再进 |
 
-六个 lobe 五家。只有感知和推理都是 Qwen，因为 mmproj 是跟模型走的，而且 2B 看截图明显比 LFM2.5-VL-1.6B 强，这个地方不值得为了多样性牺牲。granite 用 h-micro 不用 micro，h 是混合 Mamba2 结构，KV 小得多。Nemotron-3-Nano-4B 也是混合 Mamba-Transformer（42 层只有少数是注意力）。gemma-4-E2B 一个 KV 头，KV 也小。
+Qwen3.5-9B（IQ4_XS 5.17G）只在评测里当基线 R，运行时不用它。原来的 escalate / remote 两档 2026-09-14 晚上删掉了，见 DECISIONS。
 
-`shared` 这套：executive 还是 LFM2.5-1.2B 在 CPU，perception 挂 4B 的 mmproj，reasoning / motor / language / verifier 全是 Qwen3.5-4B 换提示词，verifier 走盲解。常驻 4.6G 不换。
+六个 lobe 四家（executive 换成 granite 之后三家：Qwen、IBM、Google）。感知和推理都是 Qwen，因为 mmproj 是跟模型走的，而且 2B 看截图明显比 LFM2.5-VL-1.6B 强，这个地方不值得为了多样性牺牲；executive 不当证人，和 motor 同家不影响一致性判定。granite 用 h-micro 不用 micro，h 是混合 Mamba2 结构，KV 小得多。Nemotron-3-Nano-4B 也是混合 Mamba-Transformer（42 层只有少数是注意力）。gemma-4-E2B 一个 KV 头，KV 也小。
 
-Qwen3.5 的 thinking 用 `chat_template_kwargs: {enable_thinking: false}` 关，原生支持工具调用，上下文 262K。Nemotron 也有 reasoning on/off 两种模式。远端 provider（Codex / OpenAI / Claude / DeepSeek）可以顶替任何一个 lobe。V3 想试的：LFM2.5-8B-A1B（Q4 5.16G，激活 1B）放 CPU 当第二意见；nomic-embed（本机已有）做记忆。
+`shared` 这套：executive 还是 granite-1b 在 CPU，perception 挂 4B 的 mmproj，reasoning / motor / language / verifier 全是 Qwen3.5-4B 换提示词，verifier 走盲解。常驻 4.6G 不换。
+
+Qwen3.5 的 thinking 用 `chat_template_kwargs: {enable_thinking: false}` 关，原生支持工具调用，上下文 262K。Nemotron 也有 reasoning on/off 两种模式。V3 想试的：LFM2.5-8B-A1B（Q4 5.16G，激活 1B）放 CPU 当第二意见；nomic-embed（本机已有）做记忆。
 
 不打算用的：xLAM-2 那类专用函数调用模型（2025 年 Llama-3.2 底子，有了语法约束之后没优势）；Transformers 加 bitsandbytes（Windows 8G 下比 GGUF 又慢又费显存）；vLLM（Windows 支持差）。模型名只出现在配置里，llama.cpp 的 README 里已经出现 Qwen 3.6 的字样了，到时候改配置就行。
 
@@ -155,7 +157,7 @@ Qwen3.5 的 thinking 用 `chat_template_kwargs: {enable_thinking: false}` 关，
 
 `specialists` 下一个普通文本任务的走法：executive（CPU）看一眼决定要不要工具和推理 → reasoning 4B 进 GPU（3.6G）→ 要调工具就把 motor granite 也进来（1.9G 加 KV，两个一起 5.8G，挤得下）→ 验证和 language 都是 gemma 1.7G，进来时按 LRU 把 motor 卸掉，4B 留着。一趟下来换两次，加载开销四五秒。（第一版验证用 Nemotron 3.2G，进不来要把 4B 也卸掉，推理验证之间来回换，一道乘法题换了 9 次 58 秒，所以改了。）这就是 `specialists` 的代价，评测会把它记下来。executive 能自己答的小问题走快速路径，一次模型都不换。
 
-`shared` 下 4B 常驻不动，只有升级 9B 时全卸。
+`shared` 下 4B 常驻不动。
 
 部分卸载到 CPU 只在跑 gemma-4-12B 基线时允许，正常路径禁用，太慢。
 
@@ -169,27 +171,35 @@ Qwen3.5 的 thinking 用 `chat_template_kwargs: {enable_thinking: false}` 关，
 chat(messages, schema=None, tools=None, images=None, thinking=False) -> Envelope
 ```
 
-OpenAI 兼容的适配器一个就覆盖 llama-server、LM Studio、OpenAI、Codex、DeepSeek、OpenRouter。Anthropic 单写一个，六十行左右。配置长这样：
+OpenAI 兼容的适配器一个就覆盖 llama-server 和 LM Studio，两个都在本机。配置长这样：
 
 ```yaml
 providers:
   local:     {type: openai, base_url: http://127.0.0.1:8080/v1}
   lmstudio:  {type: openai, base_url: http://127.0.0.1:1234/v1}
-  openai:    {type: openai, base_url: https://api.openai.com/v1, api_key: ${OPENAI_API_KEY}}
-  deepseek:  {type: openai, base_url: https://api.deepseek.com/v1, api_key: ${DEEPSEEK_API_KEY}}
-  anthropic: {type: anthropic, api_key: ${ANTHROPIC_API_KEY}}
 roles:
   main: local/qwen3.5-4b
   fast: local/qwen3.5-0.8b
   verifier: local/qwen3.5-4b
-  escalate: [local/qwen3.5-9b, openai/gpt-5.x]
 ```
 
-key 只放 .env，不进 git。`lobes providers test` 挨个打一下看通不通。
+`lobes providers test` 挨个打一下看通不通。
 
 模型管理器就是一张表：name、file、vram_est、resident、loaded、last_used。`ensure(name)`：没加载就按 LRU 卸非常驻的直到预算够，然后 `/models/load`，轮询到就绪。加载完读一次 nvidia-smi 把 vram_est 校准掉。
 
 路由器是个纯函数 `route(state)`，状态机：INTAKE → FAST 或 PLAN → ACT → TOOL → VERIFY → 回答 / 重试回 ACT / 再跑工具 / 升级后回 ACT。最多 8 步、2 次重试、1 次升级。（v3：INTAKE → FAST 或 LOOK → 证人逐个跑到两个一致 → 回答；代码题是实现 → 例子/盲测试 → 带失败原因重做。没有重试回路，单题有证人数、调用数、token、秒四个硬上限，见 runner.py 的 EFFORT 表。）
+
+档位表（runner.py 的 EFFORT，原来贴在 README）：
+
+| level  | thinking | think tokens | witnesses | repairs | cap: calls | cap: tokens | cap: seconds |
+|--------|----------|--------------|-----------|---------|------------|-------------|--------------|
+| low    | off      | 0            | 3         | 1       | 8          | 6000        | 120          |
+| medium | on       | 6000         | 3         | 2       | 16         | 16000       | 300          |
+| high   | on       | 16000        | 5         | 3       | 24         | 40000       | 600          |
+| xhigh  | on       | 32000        | 8         | 4       | 36         | 80000       | 1200         |
+| max    | on       | ctx          | 12        | 6       | 60         | none        | none         |
+
+撞上限就带 hedge 交推理叶的值。xhigh 和 max 的 ctx 要比思考上限大。auto 从 medium 起，一档的证人用完还没多数就升 high、再 xhigh。
 
 没有消息总线。单进程函数调用传信封，每个信封追加写到 `runs/<task_id>/trace.jsonl`。多进程总线现在是过早设计。
 
@@ -199,11 +209,11 @@ key 只放 .env，不进 git。`lobes providers test` 挨个打一下看通不�
 
 日志就是 trace.jsonl 加 rich 打到终端，每次 LLM 调用记 model、tokens、延迟、显存快照。上下文超长的工具输出交给 0.8B 摘要。V0 没有长期记忆。
 
-栈：Python 3.12，httpx、pydantic v2、typer、rich、pyyaml、python-dotenv。V1 加 starlette 和 uvicorn（原打算 fastapi，两个端点用不上），评测加 pandas 和 pyarrow 读 parquet（原打算 datasets，太重）。不用 LangChain 和 LangGraph，它们把控制流藏起来，而控制流正是我要测的东西。llama.cpp 用 b10951 的 win-cuda-13.3 包（150M，cudart 另 391M，610 驱动支持 13.x）。
+栈：Python 3.12，httpx、pydantic v2、typer、rich、pyyaml（python-dotenv 随远端一起删了）。V1 加 starlette 和 uvicorn（原打算 fastapi，两个端点用不上），评测加 pandas 和 pyarrow 读 parquet（原打算 datasets，太重）。不用 LangChain 和 LangGraph，它们把控制流藏起来，而控制流正是我要测的东西。llama.cpp 用 b10951 的 win-cuda-13.3 包（150M，cudart 另 391M，610 驱动支持 13.x）。
 
 ```
 Lobes/
-  README.md  docs/ARCHITECTURE.md  lobes.yaml  .env.example  pyproject.toml
+  README.md  docs/ARCHITECTURE.md  lobes.yaml  pyproject.toml
   lobes/   cli.py config.py providers.py schema.py models.py router.py runner.py verify.py log.py
            tools/python_exec.py tools/files.py
   presets/models.ini

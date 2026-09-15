@@ -51,7 +51,7 @@ def make_app(cfg, default_profile=None):
         state = await run_in_threadpool(run, c, goal, profile=profile, images=images)
         usage = {k: state.usage.get(k, 0) for k in ("prompt_tokens", "completion_tokens", "total_tokens")}
         extra = {"task_id": state.task_id, "task_class": state.task_class, "steps": state.steps, "retries": state.retries,
-                 "escalations": state.escalations, "swaps": state.swaps, "ms": state.ms(),
+                 "swaps": state.swaps, "ms": state.ms(),
                  "verdicts": [v.verdict for v in state.verdicts]}
         rid, created = f"chatcmpl-{state.task_id}", int(time.time())
         if body.get("stream"):

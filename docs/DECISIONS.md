@@ -2,6 +2,9 @@
 
 一行一条，倒序。写这个是因为过两周我自己都会忘了当时为什么这么选。
 
+- 2026-09-14 executive 换成 granite-4.0-h-1b（Q8_0，CPU 常驻）。分类题 341 条（六个题库的题面加 21 条自己写的闲聊/代码/常识/工具题，判对的标准是运行时会走哪条路）：LFM2.5-1.2B 换了八种问法最多对 157（三个是非题 12、单字母 157、定义加例子 89，应用题判成闲聊或代码），是模型不是提示词；granite-1b 定义加例子 330、granite-h-micro 331、qwen3.5-2b 327、qwen3.5-4b 335、gemma4-e2b 320；LiquidAI 的 LFM2.5-Encoder-350M-Prompt-Router 零样本 309 且要 torch，230M/350M 本体没有分类头。定义写严一版（code = 交付源码、needs_tool = 交付程序算出的结果）三家都没涨（325/328/328），剩下十来条错各家一样（"反转句子里的单词"、字符串哈希、写文件再读判成写代码，SimpleQA 日期题判成要工具），提示词到此为止，不再往题库上调。选 1B 而不是已装在 GPU 上的 3B/4B：4070 上四个 GPU 模型本来就装不下要换入换出，分类器留在 CPU 就不参与换，一条 0.85 s、不占显存；和 motor 同家，但 executive 不当证人。
+- 2026-09-14 intake 只让模型分类，不再有规则：之前"goal 里有工具动词就把 code 降成 qa"那条删了（它是给 1.2B 擦屁股的），schema 是 {kind: chat|math|code|qa, needs_tool}，math 必须留在枚举里（去掉它整个坍成 code），kind=math 直接算 needs_tool。顺手修的三处：gemma4 模板 enable_thinking 默认开，llama-server 每次语言叶调用先偷偷想 900 token，现在每个调用都显式发 chat_template_kwargs.enable_thinking，且 schema 写进 system 提示（只靠语法约束 gemma 会答 "}54"）；答案只是一个裸数值时语言叶不改写；改写以 } ] ) > : ; , 开头的丢掉。5090 上 v3 中档 tools 从第二版的 29/30 掉到 17/30，13 条错里 11 条是 intake 标成 code（答案就变成一段程序），2 条是 gemma 的语法垃圾，都在这里。
+
 - 2026-09-14 v3：共享黑板换成证人。5090 的 trace 里 gsm8k 1252/413、multi-03/06/08 都是同一条路：执行叶（1.2B）的计划文本和照它跑出的工具输出摆给了所有叶，验证器"盲解"看得见这些就回声，答案又在每叶重新生成成自由文本丢值。现在每个证人只拿题面（图片题加带来源的描述和 OCR 行），motor 从题面写程序、推理叶思考后交复算程序、程序打印的就是该证人的值，两个一致定案（有程序跑过是 evidence，没有是 consistency）；不一致才叫第三个证人，故意选另一个家族（gemma）而不是推理叶再抽一次，错误相关性低。没有 RETRY / VERIFY_WITH_TOOL / CONFLICT 循环，程序挂了只带 stderr 修一次；定下的值原样携带到语言叶，改写丢了数字或一行就丢改写。单题硬上限：证人数、调用数、token、秒，撞上就带 hedge 交卷。梯子开着时 9B / 远端是多一个证人，不是接管。规则先写在 eval/PREREG-v3.md 再动的代码。
 - 2026-09-14 发布内容：仓库只放代码、题目清单、PREREG、REPORT 和 README 的结果表；每题记录（eval/results/*.jsonl）和 trace 不进 git，发布时打包挂 release。参考的是 Open LLM Leaderboard 把 details 放独立数据集、lm-eval-harness 的 log_samples 只推 Hub 不进代码仓库。push 前用 filter-branch 把早先进过历史的 jsonl 清掉。
 - 2026-09-14 `effort: auto` 从 medium 起，重试用完先升 high 再 xhigh，升完才换大模型：多想一会儿比换模型便宜。
@@ -36,3 +39,4 @@
 - 2026-09-14 b10951 的 Windows 包里同时有 `llama-server.exe` 和 `llama.exe`，用前者，后者留着以防哪天前者没了。
 - 2026-09-14 `lobes install --profile all` 而不是只装 specialists：shared 对照只多一个 4B 的 mmproj（0.67 GB），评测反正要用。
 - 2026-09-14 yaml 流式映射里 `${VAR}` 必须加引号，`{` 会被当成 YAML 语法。
+- 2026-09-14 晚：升级梯子和远端整个删掉。escalate / remote 两个槽、openai / deepseek provider、.env 和 key 的展开、评测条件 E / F、no_escalate 开关、记录里的 escalations 字段都没了；题难就交推理叶的值加"不确定"，不叫更大的模型，也不往外发。Qwen3.5-9B 留在 yaml 里只当评测基线 R。历史结果里的 E / F 列留在 REPORT 和 PREREG 不动。

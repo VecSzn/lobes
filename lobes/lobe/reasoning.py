@@ -1,5 +1,5 @@
 """Reasoning: a witness that answers from the goal and hands over a program that recomputes the answer. The same
-function serves the verifier and the escalate slots as witnesses. Also the code path: implementations checked
+function serves the verifier slot as a witness. Also the code path: implementations checked
 against the task's own examples."""
 from ..schema import Confidence, Envelope, Next, ToolCall
 from . import Witness, brief

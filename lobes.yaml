@@ -12,9 +12,9 @@ llama:
 # name -> where to get it, how much GPU memory it takes, where it runs.
 # vram_mb = nvidia-smi delta measured 2026-09-14 after loading with ctx 16384, 4 slots, and one 512-token generation
 models:
-  lfm2.5-1.2b:
-    repo: LiquidAI/LFM2.5-1.2B-Instruct-GGUF
-    file: LFM2.5-1.2B-Instruct-Q4_K_M.gguf
+  granite-1b:                # classifier only; Q8 because the 1B on the CPU costs no VRAM either way
+    repo: ibm-granite/granite-4.0-h-1b-GGUF
+    file: granite-4.0-h-1b-Q8_0.gguf
     device: cpu
     resident: true
     vram_mb: 0
@@ -57,45 +57,37 @@ models:
 providers:
   local:    { type: openai, base_url: http://127.0.0.1:8080/v1 }
   lmstudio: { type: openai, base_url: http://127.0.0.1:1234/v1 }
-  openai:   { type: openai, base_url: https://api.openai.com/v1, api_key: "${OPENAI_API_KEY}" }
-  deepseek: { type: openai, base_url: https://api.deepseek.com/v1, api_key: "${DEEPSEEK_API_KEY}", json: object }   # no json_schema there
 
-# low | medium | high | xhigh | max | auto: thinking, samples, retries, steps, reflection and search width scale
-# together (EFFORT in runner.py). auto starts at medium and climbs to high, then xhigh, each time the retries run
-# out, before the escalate model takes over. xhigh and max think past 16k tokens, so raise ctx first.
+# low | medium | high | xhigh | max | auto: thinking, witnesses, repairs and the per-item caps scale together
+# (EFFORT in runner.py). auto starts at medium and climbs to high, then xhigh, each time the witnesses run out.
+# xhigh and max think past 16k tokens, so raise ctx first.
 effort: medium
 
 # a lobe is filled with "provider/model", or a non-LLM implementation name.
 profile: specialists
 profiles:
   specialists:                      # one family per lobe where it doesn't hurt; swapping is the normal case
-    executive:  local/lfm2.5-1.2b
+    executive:  local/granite-1b      # LFM2.5-1.2B could not classify (157/341 at best), see DECISIONS
     perception: local/qwen3.5-2b
     reasoning:  local/qwen3.5-4b
     motor:      local/granite-h-micro
     language:   local/gemma4-e2b
     verifier:   local/gemma4-e2b      # nemotron-nano-4b was the plan; it answers blind re-solves with punctuation, see DECISIONS
-    escalate:   local/qwen3.5-9b
-    remote:     deepseek/deepseek-chat   # last rung, only used when the key is set
-  shared:                           # same weights, different prompts; nothing swaps except escalate
-    executive:  local/lfm2.5-1.2b
+  shared:                           # same weights, different prompts; nothing swaps
+    executive:  local/granite-1b
     perception: local/qwen3.5-4b-vl
     reasoning:  local/qwen3.5-4b-vl
     motor:      local/qwen3.5-4b-vl
     language:   passthrough
     verifier:   local/qwen3.5-4b-vl
-    escalate:   local/qwen3.5-9b
-    remote:     deepseek/deepseek-chat
-  # eval controls: one model in every slot, same scaffolding. "none" = slot empty (no escalation, no vision)
-  single-9b:
+  # eval controls: one model in every slot, same scaffolding. "none" = slot empty (no vision)
+  single-9b:                        # the 9B alone is also the eval baseline R: one call, no lobes
     executive:  local/qwen3.5-9b
     perception: none
     reasoning:  local/qwen3.5-9b
     motor:      local/qwen3.5-9b
     language:   passthrough
     verifier:   local/qwen3.5-9b
-    escalate:   none
-    remote:     none
   single-4b:
     executive:  local/qwen3.5-4b-vl
     perception: local/qwen3.5-4b-vl
@@ -103,14 +95,3 @@ profiles:
     motor:      local/qwen3.5-4b-vl
     language:   passthrough
     verifier:   local/qwen3.5-4b-vl
-    escalate:   none
-    remote:     none
-  remote:                           # eval condition F, only runs with a key in .env
-    executive:  deepseek/deepseek-chat
-    perception: none
-    reasoning:  deepseek/deepseek-chat
-    motor:      deepseek/deepseek-chat
-    language:   passthrough
-    verifier:   deepseek/deepseek-chat
-    escalate:   none
-    remote:     none

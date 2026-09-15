@@ -151,9 +151,6 @@ def api(host: str = "127.0.0.1", port: int = 8090, profile: str = None):
 def providers_test():
     cfg = config.load()
     for name, p in cfg["providers"].items():
-        if p.get("base_url", "").startswith("https://") and not p.get("api_key"):
-            rprint(f"{name}: skipped, no key")
-            continue
         try:
             ids = providers.list_models(p)
             rprint(f"{name}: ok, {len(ids)} models" + (f" ({', '.join(ids[:5])}...)" if ids else ""))

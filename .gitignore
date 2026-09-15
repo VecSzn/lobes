@@ -21,3 +21,4 @@ eval/data/
 
 # per-item eval records; the tables in eval/REPORT.md are computed from them, the files ship as a release asset
 eval/results/
+docs/img/*.png

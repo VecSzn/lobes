@@ -50,6 +50,23 @@ tables. PREREG.md is the contract; this file says what actually happened.
    changes; the 8 R items from that stretch were thrown away and R starts over on the second
    box. A double launch in the same minutes ran the D/E eval twice for five minutes and recorded
    ocrbench-610 twice; the second record was dropped.
+10. v3 (PREREG-v3.md): the executive changed after the pre-registration. The 1.2B classified
+    157 of 341 labelled prompts at best, so the rules it needed were removed (the model
+    classifies alone, 0f218c1) and the slot went to granite-4.0-h-1b, which gets 330 (4a98642).
+    The labelled prompts are not eval items. The v3 D medium run and 89 items of D high had
+    already finished on the earlier code (d947c71); they are kept as `5090-v3-d947c71` and
+    `5090-v3-high-d947c71` (277/370 at medium, 13 of the 17 tools misses were tool tasks filed
+    as code) and both conditions ran again on main.
+11. Every v3 line ran with `--workers 4`, four items in flight on one box. Seconds are wall time
+    under that contention for R and D alike, so they compare with each other and not with the
+    v2 tables above, which ran one item at a time. Tokens and correctness do not depend on it.
+    The pods also carry `threads: 8` and a 65536 context for the reasoning model (`eval/pod.sh`).
+12. A line not in the PREREG table: the second version at high on the enlarged suites with the
+    same intake fix, branch `v2-fix` (1d778d1 = fc7ff7e plus the model-only classifier, the
+    granite executive and the language-lobe fixes), tag `5090-v2fix-high`, so that the v2 high
+    milestone has a new-ruler number. `5090-pre-v3` stays the old classifier as pre-registered.
+13. The v3 section below was written while D medium was at 275 of 370 items and D high at 39.
+    It covers the finished suites only and is replaced when the runs end.
 
 ## Quick timing (seed 0-2 mixed, 3 items per suite, not part of the results)
 
@@ -238,6 +255,52 @@ On the same v1 code, seed and items, the 4070 and the 5090 differ by 17 points o
 70). Nothing in the code knows which GPU it is on; llama.cpp rounds differently on each and a
 30-item suite moves 3.3 points per item. Read any difference under about 15 points in this
 report as inside that band unless it points the same way in every condition.
+
+### 5090, v3 against the 9B alone on the enlarged suites, seed 0 (running)
+
+Same items, same boxes as deviation 9, four workers each (deviation 11). R is the 9B as
+shipped, one call per item (deviation 6). D is v3 at medium on `main` after the executive
+change (deviation 10). Finished suites only; simpleqa, ocrbench and multistep follow.
+
+| suite | n | R correct | D correct | R tokens | D tokens | R s | D s | R forced | D forced |
+|-----------|-----|-----|-----|-------|------|------|------|----|----|
+| gsm8k     | 200 | 184 | 181 | 10924 | 6805 | 51.1 | 30.5 | 73 | 41 |
+| humaneval | 30  | 29  | 28  | 15786 | 6893 | 76.1 | 32.4 | 15 | 7  |
+| tools     | 30  | 25  | 27  | 15176 | 8572 | 72.0 | 36.4 | 15 | 12 |
+| the three | 260 | 238 | 236 | 11976 | 7019 | 56.4 | 31.4 | | |
+
+Tokens are prompt plus completion over every call of the item, means; seconds are means of
+wall time. Medians: gsm8k R 5562 tokens and 42 s, D 5302 and 27 s; humaneval R 17642 and 91 s,
+D 3646 and 21 s; tools R 18085 and 93 s, D 5969 and 33 s. "Forced" counts items where a
+thinking call ran out of budget and was made to answer (deviation 7): for R the 12000 cap,
+for D the medium 6000. Longest D item: gsm8k 69 s, humaneval 137 s, tools 86 s; 5 of the 260
+took over 60 s. D hit a per-item cap twice (tokens, both humaneval).
+
+Over the three suites D is two items behind R on 59% of its tokens and 56% of its seconds.
+Item by item on gsm8k: D misses 19, R 16, and 12 are the same items (962 among them, wrong
+in every condition since v1). D alone misses 7, R alone 4. On humaneval both miss
+145; D also misses 65. On tools nothing overlaps: R misses 21, 22, 23, 33, 49; D misses 29, 39
+and 44, all three tool tasks the executive filed as code, which the code path then runs as an
+implementation with no witness. That is the same failure as the 13 at d947c71, down from 11 of
+the old 30 to 3.
+
+How the witnesses behaved on gsm8k, the suite with enough items to say: the first two
+(motor, reasoning) agreed on 121 of 200 and were right on 116 of those; a third witness was
+drawn 79 times and settled 8 more; 73 items ended with no majority and went out as the
+reasoning lobe's value with "not sure" in front, and 59 of those 73 were right. Of the 127
+items settled on evidence, 122 are right (96.1%); the 5 wrong ones are 962, 823, 1016, 711
+and 1195, four of them wrong for the 9B too. The disagreement comes mostly from the motor
+lobe: its program printed nothing on 33 of 200 items, 31 of them among the 73 with no
+majority. The reasoning lobe was forced out of its 6000-token thinking budget on 41 items,
+22 of them among the 79 that needed a third witness.
+
+Early reads of PREREG-v3, to be written up properly when the runs end: W2 holds so far
+(181 against 184, one point down, within the 2 allowed; 1252 and 413 are among the 200 and
+right, both hedged). W3 holds on gsm8k and tools; W4 fails on the longest item (137 s at medium, under
+four workers) and holds on caps (2 of 260 under the 2%); W5 fails on the rate (first two
+disagree on 39.5%, not under 25%) and misses on the precision by one item (96.1% against
+97%), and the mechanism reading is above: the agreed-and-wrong items are the gold-disputed
+ones, the disagreement is the motor lobe returning nothing; W8 holds (28 against 26).
 
 ## Which hypotheses held
 

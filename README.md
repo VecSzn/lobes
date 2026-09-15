@@ -1,52 +1,122 @@
 # Lobes
 
-Six small models, one job each, swapped in and out of an 8 GB GPU. An answer is
-accepted when two derivations that never saw each other agree, and what a program
-printed counts for more than what a model wrote.
+English | [中文](README.zh-CN.md)
 
-I came up with this on my own, then went reading and found the neighbours: a
-controller model handing sub-tasks to specialists is HuggingGPT, trying a cheap model
-before an expensive one is a cascade (FrugalGPT), and every multi-agent framework
-gives each role its own model. What almost none of them run is the control, one model
-given the same scaffolding, so what they show is that the scaffolding helps, not that
-the split does. So the question here is narrower. Does splitting the work across
-small models from different families buy anything over one 9B, or one 4B, or one 4B
-playing all six parts, each with the same tools, retries and verifier? The 9B with no
-scaffolding at all is the floor. My bet, written down before running anything
-([eval/PREREG.md](eval/PREREG.md)): not accuracy. Maybe reliability and cost. The
-numbers are in [eval/REPORT.md](eval/REPORT.md) and summarized below.
+Six small models on an 8 GB laptop GPU, one job each. An answer counts when two of
+them reach it without seeing each other's work, and what a program printed beats what
+a model wrote. The eval asks one question: does that buy anything over one 9B model
+with no scaffolding at all?
 
-Design notes are in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) (Chinese),
-what changed and why in [docs/DECISIONS.md](docs/DECISIONS.md).
+## Scores
 
-## What is in it
+One RTX 5090, seed 0, the same items for every line, four items in flight on each box.
+Bare 9B is Qwen3.5-9B as shipped, one call per item, no tools. v3 is this runtime with
+the `specialists` profile at effort medium. Suites appear as their runs finish: SimpleQA,
+OCRBench and multistep for v3, the high run, and the second version with the v3 intake
+are still going.
 
-    executive    picks the route (rules first, a 1.2B model for the rest); writes no plan
-    perception   describes images and screenshots; an ocr engine reads them a second time
-    motor        first witness on anything computable: one tool call from the goal alone,
-                 its output is the value
-    reasoning    second witness: thinks, answers, and hands over a program that recomputes
-                 the answer; the program's output is the value. Code tasks: the
-                 implementation, re-done with the failure attached when its tests fail
-    verifier     third witness from another family when the first two disagree; for code,
-                 the task's own >>> examples or a test written without seeing the code
-    language     final wording; a code check stops it from changing numbers or dropping a
-                 line, and an answer nothing backs gets a "not sure" in front
+![correct per suite, higher is better](docs/img/suites.svg)
 
-Each witness gets the goal (and, for images, what perception and the ocr engine read,
+![tokens and seconds per item, lower is better](docs/img/cost.svg)
+
+| suite | bare 9B | v3, medium | tokens per item, 9B | tokens, v3 | seconds per item, 9B | seconds, v3 |
+|---|---|---|---|---|---|---|
+| GSM8K, 200 | 184 | 181 | 10,924 | 6,805 | 51 | 31 |
+| HumanEval, 30 | 29 | 28 | 15,786 | 6,893 | 76 | 32 |
+| tools, 30 | 25 | 27 | 15,176 | 8,572 | 72 | 36 |
+| those three, 260 | 238 | 236 | 11,976 | 7,019 | 56 | 31 |
+
+The point of the split was the same answers for fewer tokens and less time, from models
+an 8 GB laptop GPU can hold. On the three suites in so far that is 41% fewer tokens and
+44% less time for two items out of 260, and more correct on tools. Of the 19 GSM8K
+misses, 12 are items the 9B misses too. The item-level reading, the witness statistics
+and the pre-registered hypotheses are in [eval/REPORT.md](eval/REPORT.md); the rules were
+written down before any run, in [eval/PREREG.md](eval/PREREG.md) and
+[eval/PREREG-v3.md](eval/PREREG-v3.md).
+
+## Milestones
+
+![each version against the bare 9B of its ruler, higher is better](docs/img/milestones.svg)
+
+All on 2026-09-14, in order. The first three are on the first suite sizes, one item at a
+time; v3 is on the enlarged suites, and the two rulers are not comparable with each other.
+
+- **v1**, morning. Six lobes around a shared blackboard: the executive writes a plan,
+  motor runs tools, reasoning answers, the verifier re-solves blind, language words
+  it. Built and run on the 4070; on the 5090 it scored 74/90 on the four suites the
+  9B runs. Tag `v1-4070`.
+- **v2**, afternoon. Fixes from reading the v1 traces, rules in
+  [eval/PREREG-v2.md](eval/PREREG-v2.md). 78/90 at medium.
+- **v2 at effort high: 82/90 against the 9B's 84/90, on 60% of its tokens and 73% of
+  its seconds.** Tools 20/20 against 18/20, the first suite where the split beat the
+  single model. HumanEval 26 against 27, GSM8K 27 against 29, multistep 9 against 10.
+- **v3**, evening. The blackboard goes: every witness gets the goal and nothing another
+  witness produced, and two that agree settle it
+  ([eval/PREREG-v3.md](eval/PREREG-v3.md)). The 1.2B executive, which classified 157
+  of 341 test prompts, gives way to a 1B Granite that gets 330.
+- **v3 at medium on the enlarged suites, three suites in: 236 against the 9B's 238 on
+  59% of its tokens and 56% of its seconds, tools 27/30 against 25/30.** The rest of the
+  suites and the high run are still going.
+
+The second version on the first suite sizes, for the record:
+
+| suite | bare 9B | v2, medium | v2, high |
+|---|---|---|---|
+| GSM8K | 29/30 | 27/30 | 27/30 |
+| HumanEval | 27/30 | 24/30 | 26/30 |
+| tools | 18/20 | 18/20 | 20/20 |
+| multistep | 10/10 | 9/10 | 9/10 |
+| SimpleQA | 2/30 | 3/30 | 2/30 |
+| OCRBench | no images | 12/20 | 12/20 |
+| the four the 9B runs | 84/90 | 78/90 | 82/90 |
+| tokens per item, those four | 12,279 | 3,763 | 7,426 |
+| seconds per item, those four | 32 | 11 | 24 |
+
+## Models
+
+One family per lobe where it does not hurt. The roster is `lobes.yaml` and nothing in
+the code names a model; a lobe can also be plain code. Everything runs on this machine,
+nothing is sent anywhere, and no bigger model is called when a task looks hard. On the
+4070 the GPU models swap in and out of a 6.4 GB budget; the classifier sits on the CPU
+and never takes part in the swapping.
+
+```mermaid
+flowchart LR
+  subgraph cpu["CPU, always loaded"]
+    E["executive<br/>Granite 4.0 H 1B · Q8 · 1.6 GB"]
+  end
+  subgraph gpu["GPU, swapped inside a 6.4 GB budget"]
+    P["perception<br/>Qwen3.5-2B + vision · Q4 · 2.6 GB"]
+    R["reasoning<br/>Qwen3.5-4B · Q4 · 3.4 GB"]
+    M["motor<br/>Granite 4.0 H Micro 3B · Q4 · 2.4 GB"]
+    V["verifier<br/>Gemma 4 E2B · Q4 · 1.7 GB"]
+    L["language<br/>Gemma 4 E2B · same weights"]
+  end
+```
+
+## How it works
+
+```mermaid
+flowchart TD
+  G(["goal"]) --> E["executive: chat, code, math or a question, and would a program help"]
+  E -->|chat| F["executive answers on the spot"] --> L
+  E -->|code| C["reasoning implements it, the task's own examples or a blind test run it, one redo with the failure attached"] --> L
+  E -->|image| P["perception describes it and an OCR engine reads it, then perception and reasoning answer"] --> A
+  E -->|a program would help| M["motor: one program from the goal alone, its output is the value"] & R["reasoning: thinks, answers, hands over a program that recomputes it"]
+  E -->|closed book| Q["reasoning answers 3 times (5 at high) without seeing itself"] --> A
+  M & R --> A{"agree? two of them, or all of them when nothing ran"}
+  A -->|no, witnesses left| V["one more: the verifier from another family solves it blind, then further reasoning samples"] --> A
+  A -->|yes| L["language: wording only, a code check keeps every number and line"] --> ANS(["answer"])
+  A -->|no, witnesses used up| H["reasoning's value, marked not sure"] --> L
+```
+
+Each witness gets the goal (and, for images, what perception and the OCR engine read,
 labelled) and nothing another witness produced. Two that agree settle it: `evidence`
-when one of them ran a program, `consistency` when neither did. No majority within the
-level's witness count means the reasoning lobe's value, hedged. There is no retry loop;
-a program that dies gets one repair with its own stderr and that is all.
-
-Which model fills which lobe is only in `lobes.yaml`. A lobe can point at a local
-GGUF (llama-server in router mode), an OpenAI-compatible remote, or plain code.
-Profiles: `specialists` (one family per lobe), `shared` (one 4B for everything),
-plus the single-model controls used by the eval.
-
-Tools: python, shell (timeout, blacklist), read/write/edit file, web fetch,
-screenshot. Every tool output is a file in `runs/<task>/`; it reaches the answer only
-as a witness's value, never as text another lobe reads.
+when one of them ran a program, `consistency` when neither did; a closed-book answer
+needs every sample to agree. A program that dies gets one repair with its own stderr
+and that is all. `--effort
+low|medium|high|xhigh|max|auto` scales thinking, witness count, repairs and the
+per-item caps; the table is in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Quick start
 
@@ -58,54 +128,16 @@ llama-server from source (git, cmake, nvcc on PATH).
     lobes serve                     # keep this running
     lobes ask "what is 17 * 23"
     lobes ask --image shot.png "what is on this screen"
-    lobes ask --effort high "..."   # low | medium | high | xhigh | max | auto, see below
     lobes api                       # OpenAI-compatible /v1/chat/completions on :8090
 
-    curl http://127.0.0.1:8090/v1/chat/completions -d '{"model":"lobes/specialists","messages":[{"role":"user","content":"what is 19 * 21"}]}'
-
-`lobes models` shows what is loaded and what it costs. `lobes ask --lobe reasoning --schema`
-talks to one lobe directly. `pip install -e .[dev,eval]` adds pytest and the parquet
-readers for `lobes eval`; `.[ocr]` adds the second image reader (RapidOCR, cpu).
-
-Effort is one knob for everything that costs time: whether the reasoning model thinks
-and how long, how many witnesses an item may draw (the fixed ones above, then hot
-samples of the reasoning lobe), how many program repairs, and the hard caps per item.
-`effort:` in lobes.yaml is the default (medium), `--effort` overrides it per call, and
-the api reads OpenAI's `reasoning_effort` field. `auto` starts at medium and climbs to
-high, then xhigh, each time the witnesses run out without a majority, before the
-escalate model joins as one more witness. The table is `EFFORT` in lobes/runner.py.
-
-| level  | thinking | think tokens | witnesses | repairs | cap: calls | cap: tokens | cap: seconds |
-|--------|----------|--------------|-----------|---------|------------|-------------|--------------|
-| low    | off      | 0            | 3         | 1       | 8          | 6000        | 120          |
-| medium | on       | 6000         | 3         | 2       | 16         | 16000       | 300          |
-| high   | on       | 16000        | 5         | 3       | 24         | 40000       | 600          |
-| xhigh  | on       | 32000        | 8         | 4       | 36         | 80000       | 1200         |
-| max    | on       | ctx          | 12        | 6       | 60         | none        | none         |
-
-A cap ends the item with what the reasoning lobe produced, hedged. low also turns the
-ladder off. xhigh and max need `ctx` above their thinking cap.
-
-## Results
-
-Filled in after the run. See [eval/REPORT.md](eval/REPORT.md).
+`lobes models` shows what is loaded. `pip install -e .[dev,eval]` adds pytest and the
+suite readers for `lobes eval`; `.[ocr]` adds the second image reader.
 
 ## Status
 
-Works on my machine (RTX 4070 Laptop, 8 GB). Verified: the eight models load and
-answer under grammar constraints, the swap chain stays inside the budget, the
-retry/vote/escalate ladder fires, the api round-trips, screenshots reach the
-perception lobe. Built but not verified: the remote rung and remote provider (no key).
-Not done: multi-turn memory, anything concurrent.
+Verified on an RTX 4070 Laptop (8 GB): the models load and answer under grammar
+constraints, the swap chain stays inside the budget, the api round-trips, screenshots
+reach the perception lobe. Not done: multi-turn memory, anything concurrent.
 
-## Layout
-
-    lobes.yaml        models, providers, profiles
-    lobes/            runtime, one file per concern, lobes in lobes/lobe/
-    eval/             prereg, suites, results, report
-    docs/             design notes, decisions
-    tests/            pytest, no GPU needed
-    models/ bin/      downloaded, gitignored
-    runs/             one directory per task with the full trace
-
-MIT.
+Design notes in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) (Chinese), what changed
+and why in [docs/DECISIONS.md](docs/DECISIONS.md). MIT.

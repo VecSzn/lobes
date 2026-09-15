@@ -1,7 +1,7 @@
-"""One chat() for every OpenAI-compatible endpoint: llama-server, LM Studio, OpenAI, DeepSeek, ...
+"""One chat() for the OpenAI-compatible endpoints on this machine: llama-server, LM Studio.
 
 Structured output goes through response_format json_schema. llama-server turns that into a
-grammar, so locally the JSON is valid by construction; remote providers mostly honour it too.
+grammar, so the JSON is valid by construction.
 """
 import base64
 import io
@@ -57,27 +57,26 @@ def chat(provider, model, messages, *, schema=None, images=None, thinking=None,
     body = {"model": model, "messages": messages, "temperature": temperature, "max_tokens": max_tokens}
     if seed is not None:
         body["seed"] = seed
-    if schema is not None and provider.get("json") == "object":
-        # providers without json_schema support (deepseek): json mode plus the schema pasted into the prompt
-        body["response_format"] = {"type": "json_object"}
-        messages.insert(0, {"role": "system", "content": "Reply with JSON matching this schema:\n" + json.dumps(schema)})
-    elif schema is not None:
+    if schema is not None:
+        # the grammar only constrains tokens: a model that was not told the format plans prose and the grammar
+        # then mangles it (gemma answered "}54"), so the schema is in the prompt too
+        hint = "Reply with JSON matching this schema:\n" + json.dumps(schema)
+        if messages[0]["role"] == "system":
+            messages[0]["content"] += "\n" + hint
+        else:
+            messages.insert(0, {"role": "system", "content": hint})
         body["response_format"] = {"type": "json_schema", "json_schema": {"name": "out", "schema": schema}}
-    if thinking is not None:
-        # Qwen3.5 and Nemotron 3 both read enable_thinking from the chat template; llama-server passes it through
-        body["chat_template_kwargs"] = {"enable_thinking": bool(thinking)}
-
-    headers = {}
-    if provider.get("api_key"):
-        headers["Authorization"] = f"Bearer {provider['api_key']}"
+    # always said explicitly: llama-server turns thinking on by default for any template that has it (gemma4 did
+    # ~900 tokens of it per language call); Qwen3.5, Nemotron 3 and gemma4 all read enable_thinking
+    body["chat_template_kwargs"] = {"enable_thinking": bool(thinking)}
 
     t0 = time.perf_counter()
-    j = _post(provider, body, headers, timeout)
+    j = _post(provider, body, timeout)
     msg = j["choices"][0]["message"]
     reasoning = msg.get("reasoning_content") or msg.get("reasoning")
     usage = j.get("usage", {})
     forced = False
-    if j["choices"][0].get("finish_reason") == "length" and reasoning and not msg.get("content") and not provider.get("api_key"):
+    if j["choices"][0].get("finish_reason") == "length" and reasoning and not msg.get("content"):
         # thinking ate the whole cap. llama-server prefills a trailing assistant turn, and the chat template only
         # closes the think block when content is non-empty, so the model answers from what it thought so far.
         if ctx:
@@ -90,11 +89,11 @@ def chat(provider, model, messages, *, schema=None, images=None, thinking=None,
                                         "content": "{" if schema is not None else " "}]
         body["max_tokens"] = 2500
         try:
-            j = _post(provider, body, headers, timeout)
+            j = _post(provider, body, timeout)
         except httpx.HTTPStatusError:
             # gemma4's template folds the prefilled reasoning into the grammar and llama-server then rejects it (400)
             body.pop("response_format", None)
-            j = _post(provider, body, headers, timeout)
+            j = _post(provider, body, timeout)
         msg = j["choices"][0]["message"]
         usage = {k: usage.get(k, 0) + j.get("usage", {}).get(k, 0) for k in ("prompt_tokens", "completion_tokens", "total_tokens")}
         forced = True
@@ -121,14 +120,13 @@ def chat(provider, model, messages, *, schema=None, images=None, thinking=None,
     )
 
 
-def _post(provider, body, headers, timeout):
-    r = httpx.post(provider["base_url"].rstrip("/") + "/chat/completions", json=body, headers=headers, timeout=timeout)
+def _post(provider, body, timeout):
+    r = httpx.post(provider["base_url"].rstrip("/") + "/chat/completions", json=body, timeout=timeout)
     r.raise_for_status()
     return r.json()
 
 
 def list_models(provider, timeout=10.0):
-    headers = {"Authorization": f"Bearer {provider['api_key']}"} if provider.get("api_key") else {}
-    r = httpx.get(provider["base_url"].rstrip("/") + "/models", headers=headers, timeout=timeout)
+    r = httpx.get(provider["base_url"].rstrip("/") + "/models", timeout=timeout)
     r.raise_for_status()
     return [m["id"] for m in r.json().get("data", [])]

@@ -1,49 +1,42 @@
-"""Executive: picks the route with rules, and if a model is configured, classifies the rest. It writes no plan:
-a plan in the shared view made the 1.2B's reading of the task everyone's premise (PREREG-v3)."""
-import re
-
+"""Executive: the model classifies the goal, nothing else is decided here. It writes no plan: a plan in the
+shared view made the 1.2B's reading of the task everyone's premise (PREREG-v3)."""
 from ..schema import Confidence, Envelope, Next
-
-GREET = re.compile(r"^\W*(hi|hello|hey|yo|thanks|thank you|good (morning|afternoon|evening|night)|how are you"
-                   r"|what'?s up|你好|您好|嗨|哈喽|谢谢|早|早上好|晚安|在吗)\b", re.I)
-CODE = re.compile(r"\b(function|def |class |implement|write .{0,20}(python|code|script|program)|regex|unit test"
-                  r"|refactor)\b|函数|代码|实现|脚本", re.I)
-MATH = re.compile(r"\d[\d,]*\s*[-+*/×÷^%]\s*\d|\b(sum|product|calculate|compute|how many|how much|solve|prime"
-                  r"|factor|percent|average|total)\b|计算|多少|求", re.I)
-TOOLY = re.compile(r"\b(run|execute|read|open|check|test|verify|benchmark|screenshot|screen|fetch|download|https?)\b"
-                   r"|运行|执行|读取|文件|测试|截图|屏幕|网页", re.I)
 
 CLASS_SCHEMA = {"type": "object", "additionalProperties": False, "required": ["kind", "needs_tool"],
                 "properties": {"kind": {"enum": ["chat", "math", "code", "qa"]}, "needs_tool": {"type": "boolean"}}}
-CLASS_SYS = ("Classify the user's message. chat = greeting or small talk that needs no facts. math = numbers to "
-             "compute. code = they want code written. qa = anything else. needs_tool = running python would help "
-             "answer correctly.")
+CLASS_SYS = """Classify the user's message into one kind:
+- chat: a greeting, thanks, or small talk with nothing to look up or work out.
+- code: the user wants source code written, completed, fixed or explained (a function, a script, a class, a regex).
+- math: the answer is a number or quantity to work out from the message: arithmetic, a word problem, dates, counting, unit conversion.
+- qa: a fact or explanation to answer from knowledge; nothing to compute.
+needs_tool: true when running a program would help get the answer right (any calculation, hashing, file or web access); false for chat, trivia and opinions.
+Examples:
+"hey, how's it going" -> chat, false
+"Complete this python function: def is_palindrome(s: str):" -> code, true
+"how do I reverse a string in javascript" -> code, false
+"A train leaves at 3pm going 60 mph. How far has it gone by 5:30pm?" -> math, true
+"what is 2 to the power 100 modulo 97" -> math, true
+"who painted the Mona Lisa" -> qa, false
+"read notes.txt and tell me how many lines mention Tuesday" -> qa, true"""
 FAST_SYS = "You are Lobes, a local assistant. Reply in one or two sentences, in the user's language."
 
 
 def intake(ctx, state):
-    g = state.goal.strip()
     if state.images:
         state.task_class = "vision"
-    elif GREET.match(g) and len(g) < 40:
-        state.task_class, state.route = "chat", "fast"
         return
-    elif CODE.search(g):
+    if not ctx.is_model("executive"):
+        state.needs_tool = True        # no classifier: the program witnesses run for everything
+        return
+    r = ctx.chat(state, "executive", [{"role": "system", "content": CLASS_SYS}, {"role": "user", "content": state.goal.strip()}],
+                 schema=CLASS_SCHEMA, thinking=False, max_tokens=40)
+    kind = r.data["kind"] if r.data else "qa"
+    if kind == "chat":
+        state.task_class, state.route = "chat", "fast"
+    elif kind == "code":
         state.task_class = "code"
-    elif MATH.search(g):
-        state.task_class, state.needs_tool = "math", True
-    elif ctx.is_model("executive"):
-        r = ctx.chat(state, "executive", [{"role": "system", "content": CLASS_SYS}, {"role": "user", "content": g}],
-                     schema=CLASS_SCHEMA, thinking=False, max_tokens=40)
-        if r.data:
-            state.task_class, state.needs_tool = r.data["kind"], r.data["needs_tool"]
-            if state.task_class == "code" and TOOLY.search(g):
-                state.task_class = "qa"     # lfm calls "fetch x"/"take a screenshot" code; that path runs the answer as python
-            if state.task_class == "chat":
-                state.route = "fast"
-                return
-    if TOOLY.search(g):
-        state.needs_tool = True
+    else:
+        state.needs_tool = kind == "math" or not r.data or r.data["needs_tool"]
 
 
 def fast(ctx, state):

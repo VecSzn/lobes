@@ -8,12 +8,15 @@ from .verifier import norm, nums
 SYS = ("You are the language lobe. Rewrite the draft answer for the user: same facts, same values, in the language "
        "of the goal, no new claims, no preamble. If uncertainties are listed, say so in one sentence at the end.")
 HEDGE = "Not sure. Best guess: "
+BARE = re.compile(r"^[$€£¥]?-?[\d,]*\.?\d+%?$")   # one value: nothing to reword, so the model is not asked
 
 
 def faithful(out, draft, goal):
     """A rewrite may add numbers from the goal but not change or invent any, and every line of the draft (a program
     prints one value per line) must survive verbatim. gemma once rewrote a verified 97405784 into 97404784, so
     code checks, not the model."""
+    if out[:1] in "}])>:;,":        # gemma has led with a stray bracket ("}54")
+        return False
     given = set(nums(goal))
     if set(nums(out)) - given != set(nums(draft)) - given:
         return False
@@ -28,7 +31,7 @@ def confidence(state):
 
 def say(ctx, state):
     answer, unc = (state.value or "").strip(), list(state.uncertainties)
-    if ctx.is_model("language") and state.route != "fast" and state.task_class != "code" and answer:
+    if ctx.is_model("language") and state.route != "fast" and state.task_class != "code" and answer and not BARE.match(answer):
         user = f"Goal: {state.goal}\nDraft answer: {answer}\n" + ("Uncertainties: " + "; ".join(unc) if unc else "")
         schema = {"type": "object", "additionalProperties": False, "required": ["answer"], "properties": {"answer": {"type": "string"}}}
         r = ctx.chat(state, "language", [{"role": "system", "content": SYS}, {"role": "user", "content": user}],

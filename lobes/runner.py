@@ -15,14 +15,13 @@ from .lobe import Witness, agree, settle
 from .models import ModelManager
 from .schema import Verdict
 
-LADDER = ("escalate", "remote")      # extra witnesses once the local ones are spent, in this order
 EFFORT = {   # think: thinking on, budget: its token cap, n: witnesses an item may draw, retries: program repairs
     #          per witness, then the caps per item: witnesses (steps), model calls, tokens, seconds. None: no cap
-    "low":    dict(think=False, budget=0,     n=1,  retries=1, steps=4,  calls=8,  tokens=6000,  seconds=120,  ladder=False),
-    "medium": dict(think=True,  budget=6000,  n=3,  retries=2, steps=8,  calls=16, tokens=16000, seconds=300,  ladder=True),
-    "high":   dict(think=True,  budget=16000, n=5,  retries=3, steps=12, calls=24, tokens=40000, seconds=600,  ladder=True),
-    "xhigh":  dict(think=True,  budget=32000, n=8,  retries=4, steps=18, calls=36, tokens=80000, seconds=1200, ladder=True),
-    "max":    dict(think=True,  budget=None,  n=12, retries=6, steps=30, calls=60, tokens=None,  seconds=None, ladder=True),
+    "low":    dict(think=False, budget=0,     n=1,  retries=1, steps=4,  calls=8,  tokens=6000,  seconds=120),
+    "medium": dict(think=True,  budget=6000,  n=3,  retries=2, steps=8,  calls=16, tokens=16000, seconds=300),
+    "high":   dict(think=True,  budget=16000, n=5,  retries=3, steps=12, calls=24, tokens=40000, seconds=600),
+    "xhigh":  dict(think=True,  budget=32000, n=8,  retries=4, steps=18, calls=36, tokens=80000, seconds=1200),
+    "max":    dict(think=True,  budget=None,  n=12, retries=6, steps=30, calls=60, tokens=None,  seconds=None),
 }
 AUTO = ("medium", "high", "xhigh")   # effort: auto starts at the first and climbs one level when the witnesses run out
 
@@ -52,7 +51,7 @@ class TaskState:
     task_id: str
     goal: str
     images: list
-    task_class: str = "qa"           # chat | math | code | vision | qa
+    task_class: str = "qa"           # chat | code | vision | qa
     route: str = "lobes"             # fast | lobes
     needs_tool: bool = False
     observations: list = field(default_factory=list)   # Observation: what perception and ocr read from images
@@ -65,7 +64,6 @@ class TaskState:
     uncertainties: list = field(default_factory=list)
     verdicts: list = field(default_factory=list)       # one final Verdict, PASS or CONFLICT
     retries: int = 0
-    escalations: int = 0
     steps: int = 0
     swaps: int = 0
     calls: list = field(default_factory=list)          # (lobe, model, ms, tokens)
@@ -80,7 +78,7 @@ class TaskState:
     def summary(self):
         toks = sum(c[3] for c in self.calls)
         return (f"{self.task_class} witnesses={len(self.witnesses)} basis={self.basis} retries={self.retries} "
-                f"esc={self.escalations} swaps={self.swaps} calls={len(self.calls)} tokens={toks} {self.ms()} ms"
+                f"swaps={self.swaps} calls={len(self.calls)} tokens={toks} {self.ms()} ms"
                 + (f" capped={self.capped}" if self.capped else ""))
 
 
@@ -97,7 +95,7 @@ class Ctx:
         self.mm = ModelManager(cfg)
 
     def climb(self):
-        """auto only: move up one effort level, or None at the top. Thinking longer comes before a bigger model."""
+        """auto only: move up one effort level, or None at the top."""
         if not self.auto or self.level == AUTO[-1]:
             return None
         self.level = AUTO[AUTO.index(self.level) + 1]
@@ -108,13 +106,12 @@ class Ctx:
         return config.lobe(self.cfg, lobe, self.profile)
 
     def is_model(self, lobe):
-        """True when the profile fills this slot with a model we can actually call (remote ones need a key)."""
+        """True when the profile fills this slot with a model."""
         try:
             prov, _ = self.slot(lobe)
         except KeyError:
             return False
-        p = self.cfg["providers"].get(prov, {})
-        return prov != "impl" and (not p.get("base_url", "").startswith("https://") or bool(p.get("api_key")))
+        return prov != "impl"
 
     def chat(self, state, lobe, messages, *, schema=None, thinking=None, temperature=0.2, max_tokens=2048, images=None):
         prov, model = self.slot(lobe)
@@ -169,43 +166,39 @@ def capped(ctx, state):
     return state.capped
 
 
-def _plan(ctx, state, rungs):
+def _plan(ctx, state):
     """Who derives the answer, in order, as (lobe, callable). The cheap ones go first because the loop stops as
-    soon as enough agree; hot samples of the reasoning lobe fill up to n, the ladder comes last."""
+    soon as enough agree; hot samples of the reasoning lobe fill up to n."""
     from .lobe import motor, perception, reasoning
     n = ctx.effort["n"]
     hot = ("reasoning", lambda: reasoning.witness(ctx, state, temperature=0.7))
     if state.task_class == "vision":
         plan = [("perception", lambda: perception.ask(ctx, state)), ("reasoning", lambda: reasoning.witness(ctx, state))]
-    elif state.task_class == "math" or state.needs_tool:
+    elif state.needs_tool:
         plan = [("motor", lambda: motor.witness(ctx, state)), ("reasoning", lambda: reasoning.witness(ctx, state)),
                 ("verifier", lambda: reasoning.witness(ctx, state, lobe="verifier", thinking=False))]
     else:
         plan = [("reasoning", lambda: reasoning.witness(ctx, state))]
     plan += [hot] * (n - len(plan))
-    plan += [(r, lambda r=r: reasoning.witness(ctx, state, lobe=r)) for r in rungs]
     return [(lobe, fn) for lobe, fn in plan if ctx.is_model(lobe)]
 
 
 def _need(ctx, state):
     """Closed-book answers need every sample to agree; anything a program can settle needs two."""
-    if state.task_class in ("math", "vision") or state.needs_tool or any(w.ran for w in state.witnesses):
+    if state.task_class == "vision" or state.needs_tool or any(w.ran for w in state.witnesses):
         return 2
     return ctx.effort["n"]
 
 
-def _witnesses(ctx, state, rungs):
+def _witnesses(ctx, state):
     from .lobe import verifier
     i, hit = 0, None
     while True:
-        plan = _plan(ctx, state, rungs)
+        plan = _plan(ctx, state)
         while i < len(plan) and not capped(ctx, state):
             lobe, make = plan[i]
             i += 1
             state.steps += 1
-            if lobe in LADDER:
-                state.escalations += 1
-                ctx.trace.write("escalate", to=ctx.slot(lobe))
             w = make()
             state.witnesses.append(w)
             ctx.trace.write("witness", lobe=w.lobe, value=(w.value or "")[:500], ran=w.ran, ref=w.ref, note=w.note)
@@ -272,11 +265,10 @@ def run(cfg, goal, *, profile=None, images=None, task_id=None):
         return _finish(ctx, state, language)
     if state.images and ctx.is_model("perception"):
         perception.look(ctx, state)
-    rungs = [] if cfg.get("no_escalate") or not ctx.effort["ladder"] else [s for s in LADDER if ctx.is_model(s)]   # eval turns the ladder off
     if state.task_class == "code":
         _code(ctx, state)
     else:
-        _witnesses(ctx, state, rungs)
+        _witnesses(ctx, state)
     return _finish(ctx, state, language)
 
 

@@ -35,15 +35,13 @@ def jsonl(path):
 
 CONDITIONS = {                # cfg overrides on top of the profile; see PREREG for what each one is
     "R":  dict(profile="single-9b", raw=True),      # the 9B as shipped: one chat call, no lobes, no tools
-    "A":  dict(profile="single-9b", no_escalate=True),
-    "B":  dict(profile="single-4b", no_escalate=True),
-    "B3": dict(profile="single-4b", no_escalate=True, vote=3),
-    "C":  dict(profile="shared", no_escalate=True),
-    "D":  dict(profile="specialists", no_escalate=True),
-    "E":  dict(profile="specialists"),
-    "F":  dict(profile="remote", no_escalate=True),
+    "A":  dict(profile="single-9b"),
+    "B":  dict(profile="single-4b"),
+    "B3": dict(profile="single-4b", vote=3),
+    "C":  dict(profile="shared"),
+    "D":  dict(profile="specialists"),
 }
-VISION = {"B", "B3", "C", "D", "E"}
+VISION = {"B", "B3", "C", "D"}
 ABSTAIN = re.compile(r"don'?t know|do not know|not sure|cannot (find|determine|verify)|no (reliable )?information"
                      r"|unknown|unable to", re.I)
 FILES = {
@@ -189,7 +187,7 @@ def run_item(cfg, cond, seed, suite, item, vram, tag=""):
     live = [w for w in st.witnesses if w.value]
     rec.update(answer=(st.answer or "")[:1000], correct=correct, abstained=abstained, task_class=st.task_class,
                tokens=st.usage, ms=st.ms(), lobe_ms=lobe_ms, swaps=st.swaps, swap_ms=swap_ms, vram_peak_mb=vram.peak,
-               steps=st.steps, retries=st.retries, escalations=st.escalations, calls=len(st.calls),
+               steps=st.steps, retries=st.retries, calls=len(st.calls),
                basis=st.basis, passed=bool(last and last.verdict == "PASS"), level=st.effort,
                stuck=bool(st.capped), capped=st.capped, forced=forced,
                witnesses=[(w.lobe, (w.value or "")[:80], w.ran) for w in st.witnesses],
@@ -220,7 +218,7 @@ def raw_item(cfg, cond, suite, item, vram, rec):
     rec.update(answer=answer[:1000], correct=correct, abstained=abstained, task_class="raw", tokens=r.usage,
                ms=int((time.perf_counter() - t0) * 1000), lobe_ms={"raw": r.ms},
                swaps=sum(op == "load" for _, op, _, _ in mm.events), swap_ms=sum(ms for _, op, ms, _ in mm.events),
-               vram_peak_mb=vram.peak, steps=1, retries=0, escalations=0, calls=1, basis=None, passed=None,
+               vram_peak_mb=vram.peak, steps=1, retries=0, calls=1, basis=None, passed=None,
                stuck=False, finish=r.finish, forced=int(r.forced))
     if suite in ("gsm8k", "tools"):
         rec["gold_in_answer"] = item.get("gold", item.get("answer")).replace(",", "") in nums(answer)
@@ -243,11 +241,6 @@ def main(cfg, conditions, seeds, quick=False, suites=None, tag="", workers=1):
     vram = Vram()
     vram.start()
     for cond in conditions:
-        prov, _ = config.lobe(cfg, "reasoning", CONDITIONS[cond]["profile"])
-        p = cfg["providers"][prov]
-        if p.get("base_url", "").startswith("https://") and not p.get("api_key"):
-            print(f"{cond}: skipped, {prov} has no api key")
-            continue
         for seed in seeds:
             out = results / f"{'quick-' if quick else ''}{cond}-s{seed}.jsonl"
             done = set()
@@ -320,10 +313,6 @@ def report(quick=False, tag=""):
         have = [x for x in per if x is not None]
         out.append(f"| {c} | " + " | ".join("–" if x is None else f"{x:.0f}" for x in per) +
                    f" | {statistics.mean(have):.1f} | {statistics.pstdev(have):.1f} |" if have else f"| {c} | – | – | – | – | – |")
-    out.append("\n### escalation use (E): items that reached the 9B, and their accuracy\n\n| suite | escalated | correct of those |\n|---|---|---|")
-    for s in N:
-        rs = [r for r in recs if r["cond"] == "E" and r["suite"] == s and r["seed"] == 0 and r.get("escalations")]
-        out.append(f"| {s} | {len(rs)} | {sum(r['correct'] for r in rs)} |")
     return "\n".join(out)
 
 
