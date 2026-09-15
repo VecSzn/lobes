@@ -94,12 +94,13 @@ verdict, which is the settle rule absorbing the difference.
 So medium was run a second time to put a number on it: same commit, same box, same four
 workers, same llama-server processes, nothing touched between the two (`5090-v3-witness`
 finished at 18:30 UTC, `5090-v3-witness-2` started at 18:31). It scored 303 of 370 against
-308, and 266 of the 320 against 272. Eleven items came out differently, nine of them
-right-to-wrong: gsm8k 161, 450 and 781, HumanEval-10 and 125, multi-14, 17, 26 and 39,
-simpleqa-627, ocrbench-175. Only 224 of the 370 ended on the same answer string. Per suite
-the spread is tools 0, gsm8k 1, simpleqa 1, ocrbench 1, humaneval 2, multistep 2.
+308, and 266 of the 320 against 272. Eleven items came out differently: eight went
+right to wrong (gsm8k 161 and 450, HumanEval-10 and 125, multi-17, 26 and 39, simpleqa-627)
+and three the other way (gsm8k-781, multi-14, ocrbench-175). Only 224 of the 370 ended on
+the same answer string. Per suite the spread is tools 0, gsm8k 1, simpleqa 1, ocrbench 1,
+humaneval 2, multistep 2.
 
-That band is wider than most of the gaps this report would otherwise report as findings.
+That band is wider than most of the gaps this report would otherwise call findings.
 The 9B's 268 sits between the two medium runs, so this runtime does not beat it on score;
 high's 267 sits between them too, so the levels are not separated either. What survives the
 band is cost, which repeats to within 1%, and two per-suite results: tools, 30/30 in both
