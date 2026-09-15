@@ -107,6 +107,8 @@ def chat(provider, model, messages, *, schema=None, images=None, thinking=None,
             data = json.loads(text)
         except json.JSONDecodeError:
             data = None
+        if not isinstance(data, dict) or any(k not in data for k in schema.get("required", ())):
+            data = None       # the no-grammar fallback above can come back with the wrong keys
     return Reply(
         text=text,
         data=data,
