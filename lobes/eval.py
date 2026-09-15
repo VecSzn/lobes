@@ -21,9 +21,9 @@ from .runner import EFFORT, run
 DATA = config.ROOT / "eval" / "data"
 RESULTS = config.ROOT / "eval" / "results"
 SHUFFLE_SEED = 20260914
-# PREREG numbers were gsm8k 50, simpleqa 50, SMALL 10. The quick timing (A 64 s/item, B 24 s/item) projected
-# ~10 h, so the pre-registered cut rule applied: seeds 1-2 multistep only, gsm8k/simpleqa 30, B3 dropped.
-N = {"gsm8k": 30, "humaneval": 30, "tools": 20, "simpleqa": 30, "ocrbench": 20, "multistep": 10}
+# v1/v2 ran gsm8k 30, tools 20, ocrbench 20, multistep 10 (PREREG, the cut rule); PREREG-v3 enlarged them.
+# the first items of an enlarged suite are the ones that ran before, the shuffle seed did not change.
+N = {"gsm8k": 200, "humaneval": 30, "tools": 30, "simpleqa": 30, "ocrbench": 50, "multistep": 30}
 SMALL = 0                     # seeds 1 and 2: first SMALL items of every suite except multistep
 
 
@@ -138,8 +138,9 @@ def judge(suite, item, answer):
         return norm(item["gold"]) in norm(answer), bool(ABSTAIN.search(answer))
     if suite == "ocrbench":
         return any(norm(g) in norm(answer) for g in item["gold"]), False
-    if suite == "multistep":
-        return all(norm(x) in norm(answer) for x in item["answers"]), False
+    if suite == "multistep":   # a number counts wherever it is in the answer (PREREG-v3): the 9B writes "1,234"
+        return all(any(same(n, x) for n in nums(answer)) if re.fullmatch(r"-?[\d.]+", x) else norm(x) in norm(answer)
+                   for x in item["answers"]), False
     raise KeyError(suite)
 
 
@@ -327,5 +328,7 @@ if __name__ == "__main__":
     assert not judge("humaneval", he, "def add(a, b):\n    return a - b")[0]
     assert judge("simpleqa", {"gold": "Michio Sugeno"}, "I don't know, maybe Michio Sugeno.") == (True, True)
     assert judge("multistep", {"answers": ["210", "bob"]}, "sum is 210, best is Bob")[0]
+    assert judge("multistep", {"answers": ["1234", "0642"]}, "1,234 items, ending 0642 (2029)")[0]
+    assert not judge("multistep", {"answers": ["1234", "bob"]}, "1,234 items, ann")[0]
     assert not judge("ocrbench", {"gold": ["CENTRE"]}, "center")[0] and judge("ocrbench", {"gold": ["CENTRE"]}, "It says CENTRE")[0]
     print("eval judges ok")
