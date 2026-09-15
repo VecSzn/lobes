@@ -73,3 +73,13 @@ git checkout -q main
 lobes eval --conditions D --seeds 0 --workers 4 --tag 5090-v3-witness > eval-v3-witness.log 2>&1                      # box 1
 lobes eval --conditions D --seeds 0 --workers 4 --effort high --tag 5090-v3-witness-high > eval-v3-witness-high.log 2>&1   # box 2
 lobes eval --conditions D --seeds 0 --workers 4 --tag 5090-v3-witness-2 > eval-v3-witness-2.log 2>&1                  # box 1, after the medium run
+# 09-15 night, PREREG-v4: tools and multistep are 60 items each now, AIME 2025 is in and SimpleQA is not run again.
+# The AIME pilot first, on box 1, to see whether the suite is floored before freezing it (16 of 30, so it is in).
+lobes eval --conditions D --seeds 0 --workers 4 --suites aime --tag 5090-v4-aime-pilot > eval-v4-aime-pilot.log 2>&1   # box 1
+# Then the four v4 runs. Medium twice on box 1, the 9B alone after them on the same box so the seconds compare, high
+# on box 2. R takes no images, so it leaves out ocrbench; no v4 command names simpleqa.
+S=gsm8k,humaneval,tools,multistep,ocrbench,aime
+lobes eval --conditions D --seeds 0 --workers 4 --suites $S --tag 5090-v4 > eval-v4-medium.log 2>&1                    # box 1
+lobes eval --conditions D --seeds 0 --workers 4 --suites $S --tag 5090-v4-2 > eval-v4-medium-2.log 2>&1                # box 1
+lobes eval --conditions R --seeds 0 --workers 4 --suites gsm8k,humaneval,tools,multistep,aime --tag 5090-v4 > eval-v4-r.log 2>&1   # box 1
+lobes eval --conditions D --seeds 0 --workers 4 --effort high --suites $S --tag 5090-v4-high > eval-v4-high.log 2>&1   # box 2
