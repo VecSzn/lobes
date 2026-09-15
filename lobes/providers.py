@@ -57,15 +57,21 @@ def chat(provider, model, messages, *, schema=None, images=None, thinking=None,
     body = {"model": model, "messages": messages, "temperature": temperature, "max_tokens": max_tokens}
     if seed is not None:
         body["seed"] = seed
-    if schema is not None and provider.get("json") == "object":
-        # providers without json_schema support (deepseek): json mode plus the schema pasted into the prompt
-        body["response_format"] = {"type": "json_object"}
-        messages.insert(0, {"role": "system", "content": "Reply with JSON matching this schema:\n" + json.dumps(schema)})
-    elif schema is not None:
-        body["response_format"] = {"type": "json_schema", "json_schema": {"name": "out", "schema": schema}}
-    if thinking is not None:
-        # Qwen3.5 and Nemotron 3 both read enable_thinking from the chat template; llama-server passes it through
-        body["chat_template_kwargs"] = {"enable_thinking": bool(thinking)}
+    if schema is not None:
+        # the grammar only constrains tokens: a model that was not told the format plans prose and the grammar
+        # then mangles it (gemma answered "}54"), so the schema is in the prompt too. deepseek has no json_schema.
+        hint = "Reply with JSON matching this schema:\n" + json.dumps(schema)
+        if messages[0]["role"] == "system":
+            messages[0]["content"] += "\n" + hint
+        else:
+            messages.insert(0, {"role": "system", "content": hint})
+        if provider.get("json") == "object":
+            body["response_format"] = {"type": "json_object"}
+        else:
+            body["response_format"] = {"type": "json_schema", "json_schema": {"name": "out", "schema": schema}}
+    # always said explicitly: llama-server turns thinking on by default for any template that has it (gemma4 did
+    # ~900 tokens of it per language call); Qwen3.5, Nemotron 3 and gemma4 all read enable_thinking
+    body["chat_template_kwargs"] = {"enable_thinking": bool(thinking)}
 
     headers = {}
     if provider.get("api_key"):

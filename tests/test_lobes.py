@@ -4,7 +4,7 @@ import json
 import pytest
 
 from lobes import config, models, runner, tools
-from lobes.lobe import verifier
+from lobes.lobe import executive, verifier
 from lobes.providers import Reply
 from lobes.schema import Claim, Envelope, Next, Verdict
 
@@ -104,6 +104,8 @@ def test_state_machine(tmp_path, monkeypatch):
     def fake_chat(self, state, lobe, messages, *, schema=None, thinking=None, temperature=0.2, max_tokens=2048, images=None):
         seen.append(lobe)
         if lobe == "executive":
+            if schema is executive.CLASS_SCHEMA:
+                return _reply({"kind": "math", "needs_tool": True})
             return _reply({"steps": ["compute", "check"], "first": "reason"})
         if lobe == "motor":
             return _reply({"why": "compute it", "call": {"name": "python", "args": {"code": "print(17*23)"}}})
@@ -119,10 +121,10 @@ def test_state_machine(tmp_path, monkeypatch):
     monkeypatch.setattr(runner.Ctx, "chat", fake_chat)
     state = runner.run(cfg, "what is 17 * 23", profile="specialists")
     assert state.task_class == "math" and state.route == "plan"
-    assert seen == ["executive", "motor", "reasoning", "verifier", "reasoning", "verifier", "language"]
+    assert seen == ["executive", "executive", "motor", "reasoning", "verifier", "reasoning", "verifier"]   # a bare value skips language
     assert [v.verdict for v in state.verdicts] == ["VERIFY_WITH_TOOL", "PASS"]
     assert state.verdicts[-1].basis == "consistency"
-    assert state.answer == "17 × 23 = 391" and len(state.tool_results) == 2
+    assert state.answer == "391" and len(state.tool_results) == 2
     kinds = [json.loads(l)["kind"] for l in (tmp_path / "runs" / state.task_id / "trace.jsonl").read_text(encoding="utf-8").splitlines()]
     assert kinds[:4] == ["start", "intake", "plan", "tool"] and kinds[-1] == "final" and kinds.count("verdict") == 2
 
@@ -259,6 +261,8 @@ def test_auto_climb(tmp_path, monkeypatch):
 
     def fake_chat(self, state, lobe, messages, *, schema=None, thinking=None, temperature=0.2, max_tokens=2048, images=None):
         if lobe == "executive":
+            if schema is executive.CLASS_SCHEMA:
+                return _reply({"kind": "math", "needs_tool": True})
             return _reply({"steps": ["compute"], "first": "tool"})
         if lobe == "motor":
             return _reply({"why": "compute", "call": {"name": "python", "args": {"code": "print(17*23)"}}})
@@ -299,7 +303,8 @@ def test_language_guard():
 def test_fast_route(tmp_path, monkeypatch):
     cfg = config.load()
     cfg["_root"] = tmp_path
-    monkeypatch.setattr(runner.Ctx, "chat", lambda self, state, lobe, messages, **kw:
+    monkeypatch.setattr(runner.Ctx, "chat", lambda self, state, lobe, messages, schema=None, **kw:
+                        _reply({"kind": "chat", "needs_tool": False}) if schema is executive.CLASS_SCHEMA else
                         Reply(text="hi there", data=None, reasoning=None, usage={}, ms=1, timings={}))
     state = runner.run(cfg, "hello", profile="specialists")
     assert state.route == "fast" and state.answer == "hi there" and state.steps == 0 and not state.verdicts

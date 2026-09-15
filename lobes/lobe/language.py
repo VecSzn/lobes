@@ -1,16 +1,21 @@
 """Language: the final envelope. passthrough hands the candidate over as-is; a model rewrites it for the user
 without adding facts."""
+import re
+
 from ..schema import Confidence, Envelope, Next
 from .verifier import norm, nums
 
 SYS = ("You are the language lobe. Rewrite the draft answer for the user: same facts, same numbers, in the language "
        "of the goal, no new claims, no preamble. If uncertainties are listed, say so in one sentence at the end.")
 HEDGE = "Not sure. Best guess: "
+BARE = re.compile(r"^[$€£¥]?-?[\d,]*\.?\d+%?$")   # one value: nothing to reword, so the model is not asked
 
 
 def faithful(out, draft, goal):
     """A rewrite may add numbers from the goal but not change or invent any; a short draft must survive verbatim.
     gemma once rewrote a verified 97405784 into 97404784, so code checks, not the model."""
+    if out[:1] in "}])>:;,":        # gemma has led with a stray bracket ("}54")
+        return False
     given = set(nums(goal))
     if set(nums(out)) - given != set(nums(draft)) - given:
         return False
@@ -33,7 +38,7 @@ def say(ctx, state):
     if state.verdicts and state.verdicts[-1].verdict != "PASS":
         unc.append("verification did not pass: " + state.verdicts[-1].notes[:300])
     answer = cand.answer or ""
-    if ctx.is_model("language") and state.route != "fast" and state.task_class != "code":
+    if ctx.is_model("language") and state.route != "fast" and state.task_class != "code" and answer and not BARE.match(answer):
         user = f"Goal: {state.goal}\nDraft answer: {answer}\n" + \
             ("Claims:\n" + "\n".join(f"- {c.text} ({c.support})" for c in cand.claims) + "\n" if cand.claims else "") + \
             ("Uncertainties: " + "; ".join(unc) if unc else "")
