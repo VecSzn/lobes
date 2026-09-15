@@ -123,7 +123,7 @@ class Ctx:
         r = providers.chat(self.cfg["providers"][prov], model, messages, schema=schema, images=images,
                            thinking=thinking if mcfg.get("thinking") else None, temperature=temperature,
                            max_tokens=max_tokens, seed=None if seed is None else seed + len(state.calls),
-                           ctx=self.cfg.get("llama", {}).get("ctx"))
+                           ctx=mcfg.get("ctx") or self.cfg.get("llama", {}).get("ctx"))
         toks = r.usage.get("total_tokens", 0)
         for k in ("prompt_tokens", "completion_tokens", "total_tokens"):
             state.usage[k] = state.usage.get(k, 0) + r.usage.get(k, 0)

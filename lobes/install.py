@@ -105,6 +105,8 @@ def write_presets(cfg, root: Path):
         lines += [f"[{n}]", f"model = {f.as_posix()}"]
         if m.get("mmproj"):
             lines.append(f"mmproj = {mmproj_path(root, m).as_posix()}")
+        if m.get("ctx"):
+            lines.append(f"c = {m['ctx']}")
         if m.get("device") == "cpu":
             lines.append("n-gpu-layers = 0")
         if m.get("resident"):
