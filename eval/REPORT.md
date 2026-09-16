@@ -1,17 +1,97 @@
 # Eval report
 
-What happened when the rules in eval/PREREG.md, PREREG-v2.md and PREREG-v3.md were run.
-Everything below comes from `eval/results/*.jsonl` (the per-item records ship with the release,
-not in git); `lobes eval --report` prints the tables. The current numbers come first, then the
-pre-registered hypotheses, the deviations from the pre-registrations in the order they
+What happened when the rules in eval/PREREG.md, PREREG-v2.md, PREREG-v3.md and PREREG-v4.md
+were run. Everything below comes from `eval/results/*.jsonl` (the per-item records ship with the
+release, not in git); `lobes eval --report` prints the tables. The current numbers come first, then
+the pre-registered hypotheses, the deviations from the pre-registrations in the order they
 happened, and the earlier versions.
+
+## Results: the items PREREG-v4 added, 5090, seed 0
+
+v3 ended on a table where four of the numbers it wanted to compare sat inside a six-item band,
+and tools was 30/30 twice. v4 keeps every v3 item untouched and adds 90 harder ones: tools
+`tools-50` to `tools-79`, multistep `multi-40` to `multi-69`, and AIME 2025. Only those 90 run
+in each v4 condition. GSM8K, HumanEval, OCRBench, SimpleQA and the old halves of tools and
+multistep carry their v3 records forward into the v4 files (deviation 22), so the section after
+this one is still the current result for them.
+
+| the items v4 added | n | 9B alone | medium | medium again | high |
+|---|---|---|---|---|---|
+| tools, 50-79           | 30 | 11 | 30 | 28 | 29 |
+| multistep, 40-69       | 30 | 20 | 25 | 28 | 29 |
+| those two together     | 60 | 31 | 55 | 56 | 58 |
+| AIME 2025              | 30 | 13 | 12 | 15 | 16 |
+| all 90                 | 90 | 44 | 67 | 71 | 74 |
+
+Tokens are prompt plus completion over every call of the item, means; seconds are means of wall
+time under four workers.
+
+| the items v4 added | 9B tokens / s | medium | medium again | high |
+|---|---|---|---|---|
+| tools, 50-79     |  6662 / 54.4 | 12776 / 50.8 | 14287 / 57.1 | 27368 / 120.6 |
+| multistep, 40-69 |  5260 / 41.1 | 16425 / 68.1 | 15670 / 64.6 | 35747 / 162.2 |
+| those 60         |  5961 / 47.7 | 14601 / 59.5 | 14979 / 60.9 | 31558 / 141.4 |
+| AIME 2025        |  6647 / 50.6 | 30768 / 122.6 | 30337 / 122.4 | 60726 / 286.2 |
+| all 90           |  6189 / 48.7 | 19990 / 80.5 | 20098 / 81.4 | 41280 / 189.7 |
+
+The band first, because nothing below means anything without it. The two medium runs are the
+same code on the same box back to back, and on these 90 items they score 67 and 71: a band of
+4, the same width as v3's. Ten items changed verdict, seven wrong to right and three the other
+way, and only 56 of the 90 ended on the same answer string. Per suite the identical-answer rate
+says where the noise lives: tools 28 of 30 identical and 2 flips, multistep 19 and 5, AIME 9 and
+3. A gap of 4 or less on these tables is not a result.
+
+Two gaps clear it by a wide margin, and they are the point of the round.
+
+- **tools 50-79: 30 and 28 against the 9B's 11.** The old 30 were at their ceiling for this
+  runtime (30/30 in every run since v2) and the 9B scored 25 there, a gap of 5 that a 30-item
+  suite cannot resolve. On items whose value needs a computation long enough that no model of
+  this size reaches it by writing, the gap is 17 to 19 points. The 9B fails them the way it was
+  always going to: it writes a plausible number. This runtime runs a program and reads what it
+  printed.
+- **multistep 40-69: 25 and 28 against 20.** Smaller, 5 to 8 points against a band of 4, so it
+  clears but not comfortably. The old half separates nothing at all now (25, 27 and 25 against
+  25), so the whole multistep signal is in the new items.
+
+What this gap is not: it is not six lobes against one brain. PREREG-v4 says this in advance and
+it holds after the fact. Both suites reward running a program, and the 9B in condition R has no
+tools, so part of the 17 points on tools is the architecture and part is having a python
+interpreter. Nothing here separates the two.
+
+The cost direction inverts on these items, and the v3 headline does not carry onto them. Over
+the 60 tools and multistep items this runtime spends 2.45x the 9B's tokens and 1.25x its
+seconds; on the 90 with AIME in, 3.2x and 1.65x. On the v3 suites it was 59% of the tokens and
+55% of the seconds. Both statements are true of the items they were measured on, and neither
+generalises: the v3 items are ones a single sample gets right, where the split saves the 9B's
+long think, and the v4 items are ones that need several witnesses and a program each, where it
+pays for them. tools is the interesting middle, 1.9x the tokens but 0.93x the seconds, because
+the 9B spends its 6662 tokens thinking serially and this runtime spends its 12776 across calls
+that overlap.
+
+High buys 3 items over the top of the medium band (74 against 67 and 71) for 2.07x the tokens
+and 2.36x the seconds. That is the same verdict as v3 and this was the round that was supposed
+to overturn it: PREREG-v4 predicted AIME would be the first item set where the effort knob had
+something to separate, and on AIME high scores 16 against medium's 12 and 15, which is inside
+the three-sample spread of medium itself. The knob still does not pay for itself.
+
+AIME is the boundary of what this design does. Three medium samples of it exist, counting the
+pilot: 16, 12 and 15. The 9B alone scores 13, inside that spread, on a fifth of the tokens. Ten
+items are right in both the 9B's run and the second medium run, 3 only the 9B, 5 only this
+runtime, so it is not that the two are solving the same problems. What AIME rewards is one long
+chain of reasoning held together, which is exactly what a larger model's own thinking does well
+and what splitting a problem across witnesses that never see each other does not. Every one of
+the 16 right answers in the pilot came from a witness program that ran, and so did 12 of the 14
+wrong ones, so the mechanism fires; it fires on the wrong problems. This is a real limit and it
+is recorded rather than dropped, because the suite was pre-registered before the numbers existed.
 
 ## Results: Lobes against the bare 9B, 5090, the enlarged suites, seed 0
 
 Same items, same boxes as deviation 9, four workers each (deviation 11). R is the 9B as
 shipped, one call per item (deviation 6). D medium and D high are the runtime as it ships,
 the contract of deviations 13 to 18, results `5090-v3-witness` and `5090-v3-witness-high`.
-The 9B takes no images, so it has no ocrbench. Every earlier run is in the appendix.
+The 9B takes no images, so it has no ocrbench. Every earlier run is in the appendix. The tools
+and multistep rows here are the 30 items each that v3 ran, `tools-20` to `49` and `multi-10` to
+`39`; the 30 v4 added to each are the section above and are not mixed into these numbers.
 
 | suite | n | R | D medium | D medium again | D high |
 |-----------|-----|-----|-----|-----|-----|
@@ -151,6 +231,45 @@ Re-settling multistep on the first two witnesses gives 23 and on the first three
 27 as run, so the hot samples are worth 4 of the 30.
 
 ## Which hypotheses held
+
+On the 90 items v4 added (PREREG-v4.md V1-V7, which share their names with PREREG-v2's V1-V5
+and are a different set), seed 0, both medium runs. Three of the seven hold, one holds on a
+technicality that is worth more than the hypothesis, and three fail.
+
+- V1 (on the 30 new tools items, at least 10 points over the 9B, and a larger gap than on the
+  old 30): holds, and it is the strongest result of the round. 30 and 28 against 11, a gap of
+  19 and 17, against 5 on the old 30. The old suite was at the runtime's ceiling, not at its
+  limit; that was the thing this round existed to find out.
+- V2 (on the 30 new multistep items, at least 10 points over the 9B): fails. 25 and 28 against
+  20 is 5 and 8 points. The gap is real against a band of 4 but it is not the 10 that was
+  written down, and the difference between V1 holding and V2 failing says the win is running
+  one program rather than chaining several.
+- V3 (the band between the two medium runs, at most 8 items on the non-SimpleQA items): holds
+  as measured, 4, but only the 90 new items were re-run, so this is a band on 90. The other 340
+  records in each v4 file are carried and therefore identical by construction; they would have
+  drawn their own noise had they been run again, and v3 measured that spread at 11 items on 370.
+  Read V3 as untested at the width it was written for, and the 4 as the band on the new items,
+  which is what every claim above it is checked against.
+- V4 (tokens and seconds per item stay below the 9B on tools, multistep and gsm8k, and the two
+  medium runs agree within 2% on the combined total): fails on the first half, holds on the
+  second. On the new items this runtime costs 2.45x the tokens and 1.27x the seconds over tools
+  and multistep together; only tools is under on seconds (50.8 and 57.1 against 54.4) and
+  nothing is under on tokens. The repeat half holds again: 19990 against 20098 tokens is 0.5%
+  and 80.5 against 81.4 seconds is 1.1%. Cost is still the only thing in this project that
+  repeats to within a percent, and it now repeats around a number that is worse than the 9B's
+  on hard items.
+- V5 (on the new multistep items, a higher share where the witnesses agree on some values and
+  not others): fails. Comparing the first two witnesses line by line, the old 30 split 8 all
+  lines matching / 8 some / 14 none in the first run and 11 / 8 / 11 in the second; the new 30
+  split 7 / 5 / 18 and 6 / 7 / 17. What rises on the harder items is not partial agreement but
+  total disagreement, so the extra values per item do not give the contract more to work with;
+  they give the witnesses more to diverge on.
+- V6 (GSM8K stays within 2 points of the 9B): holds, carried. 182 and 181 against 184.
+- V7 (this runtime at or above the 9B on AIME, and high above medium): fails on both halves.
+  Medium scores 12 and 15 against the 9B's 13, so the 9B sits inside the medium spread; high's
+  16 is inside the spread of medium's three samples (16, 12, 15) at 1.97x the tokens. This was
+  the one item set where the effort knob was expected to have something to separate, and it is
+  the third pre-registration in a row where it separates nothing.
 
 On the 5090, this runtime against the 9B alone (PREREG-v3.md W1-W8), seed 0, at medium
 unless said. Four of the eight fail. The verdicts below are read off the first medium run;
@@ -398,6 +517,40 @@ On the 5090, v1 vs v2 (PREREG-v2.md V1-V5), seed 0.
     code and the same four workers; `lobes eval` skips items already recorded, so only the 9 ran.
     Every ocrbench number for high is from that pass. No other suite was affected and nothing
     was re-rolled: the 41 items that completed the first time are the first time's records.
+20. PREREG-v4 says the AIME pilot runs 10 to 15 items before the suite is frozen. All 30 ran.
+    `lobes eval` is resumable and works item by item, so stopping it at 12 would have thrown
+    away work already paid for, and the stopping rule was "drop the suite if it scores 0", which
+    12 items answer as well as 30. It scored 16 of 30, so the suite went in. The pilot records
+    are in `eval/results/5090-v4-aime-pilot` and are a pilot, not one of the four v4 runs; they
+    are read once in this report, as the third medium sample of AIME.
+21. The first v4 launch ran all six suites on both boxes, 430 items per condition, and was
+    stopped 12 minutes in. Re-running GSM8K, HumanEval, OCRBench and the old halves would have
+    drawn a second sample of a distribution v3 already sampled twice at medium, and bought
+    nothing this round is about. The partial files are kept next to the real ones as
+    `5090-v4-aborted-fullsuite` and `5090-v4-high-aborted-fullsuite`; nothing was read off them.
+    About 15 minutes of machine time on two boxes went into them.
+22. What replaced it: each v4 result file was seeded with the carried records before the run
+    started, tagged `carried` with the run they came from, and `lobes eval` skipped them by
+    suite and id the way it resumes any interrupted run. Each condition carries from its own v3
+    counterpart, never across conditions: the medium file from `5090-v3-witness`, the repeat from
+    `5090-v3-witness-2`, high from `5090-v3-witness-high`, the 9B from `5090-v3`. The runtime is
+    the same code in both rounds, `git diff aded056 2bb09e1 -- lobes/` being two docstrings in
+    `reasoning.py` and `verifier.py`, so a carried record and a re-run one differ only by the
+    run-to-run noise measured above. What each v4 run actually executed is the 90 new items.
+    The carried numbers are v3 numbers and are labelled as such wherever they appear.
+23. The 9B ran the new items twice. On the first pass 47 of the 90 came back as a 500 from
+    llama-server, `Context size has been exceeded`: condition R sends one long chat call and the
+    9B's child server was serving four slots out of one 16384-token context, and unlike the
+    runtime path, `eval.raw_item` has no retry without thinking to fall back on (the same
+    overflow as deviations 18e and 19, in the one place with no cover for it). The 9B's context
+    was raised to 65536 and the suite run again. Raising it needed the router restarted, not
+    just `models/models.ini` rewritten: `llama-server --models-preset` reads the preset once at
+    startup, so editing `lobes.yaml` and regenerating the file changed nothing until `lobes serve`
+    and every child were killed and started again. The failed pass is kept as
+    `R-s0-ctx16384-500s.jsonl` next to the results. This leaves a blemish worth stating: in the
+    9B's v4 file the 290 carried records ran at a 16384-token context and the 90 new ones at
+    65536. The carried numbers are the ones v3 reported and are unchanged by this; the new 90
+    are the only ones the larger context touched, and they are the ones being compared.
 
 ## Earlier versions
 
@@ -610,6 +763,17 @@ means per item on the 320. The bare 9B: 268 of 320, 13,436 tokens and 62.2 s an 
 | `5090-v3-witness` | medium, deviation 18: the README numbers | 272 | 308 | 7,887 | 34.0 |
 | `5090-v3-witness-high` | the same at high (deviation 19) | 267 | 303 | 14,160 | 69.5 |
 | `5090-v3-witness-2` | medium once more, same code, for the run-to-run noise | 266 | 303 | 7,813 | 34.3 |
+
+The v4 runs are not in that table because they do not run those 320 items; they run the 90
+items v4 added and carry the rest. Seed 0, four items in flight, means per item on the 90.
+
+| results directory | what it is | of 90 | tokens | s |
+|---|---|---|---|---|
+| `5090-v4-aime-pilot` | AIME only, medium, the pilot that froze the suite (deviation 20) | 16 of 30 | 29,827 | 121.6 |
+| `5090-v4` `R-s0` | the 9B alone, second pass at a 65536 context (deviation 23) | 44 | 6,189 | 48.7 |
+| `5090-v4` `D-s0` | medium, the README numbers | 67 | 19,990 | 80.5 |
+| `5090-v4-2` | medium once more, same code and box, for the band | 71 | 20,098 | 81.4 |
+| `5090-v4-high` | the same at high | 74 | 41,280 | 189.7 |
 
 ## Things I noticed while judging
 

@@ -19,6 +19,12 @@ SERIES = [("bare 9B", "5090-v3", "R"),
           ("Lobes, medium again", "5090-v3-witness-2", "D"),   # same code, same box: the error bar
           ("Lobes, high", "5090-v3-witness-high", "D")]
 COLORS = ["#7a7a7a", "#4c72b0", "#8fb0d8", "#dd8452"]
+# the 30 harder items PREREG-v4 added to each of these two; the ids below them are the v3 half.
+V4 = {"tools": 50, "multistep": 40}
+V4_SERIES = [("bare 9B", "5090-v4", "R"),
+             ("Lobes, medium", "5090-v4", "D"),
+             ("Lobes, medium again", "5090-v4-2", "D"),
+             ("Lobes, high", "5090-v4-high", "D")]
 
 
 def load(tag, cond):
@@ -67,6 +73,28 @@ def suites():
     return fig
 
 
+def harder():
+    fig, ax = plt.subplots(figsize=(6, 3.4))
+    runs = [(label, {s: [r for r in load(tag, cond)
+                         if r["suite"] == s and int(r["id"].split("-")[1]) >= first and "error" not in r]
+                     for s, first in V4.items()}) for label, tag, cond in V4_SERIES]
+    runs = [(label, d) for label, d in runs if all(len(rs) == 30 for rs in d.values())]
+    w = 0.8 / len(runs)
+    for i, (label, d) in enumerate(runs):
+        for j, s in enumerate(V4):
+            x = j + (i - (len(runs) - 1) / 2) * w
+            ax.bar(x, acc(d[s]), w, color=COLORS[i], label=label)
+            ax.text(x, acc(d[s]) + 1, count(d[s]), ha="center", va="bottom", rotation=90, fontsize=6.5)
+            label = None
+    ax.set_xticks(range(len(V4)), [f"{s}, the 30 harder" for s in V4])
+    ax.set_ylim(0, 128)
+    ax.set_yticks(range(0, 101, 20))
+    ax.set_ylabel("correct %  (higher is better)")
+    ax.legend(frameon=False, ncol=2, loc="lower center", bbox_to_anchor=(0.5, 1.0), fontsize=8)
+    ax.spines[["top", "right"]].set_visible(False)
+    return fig
+
+
 def cost():
     fig, axes = plt.subplots(1, 2, figsize=(9, 3))
     runs = [(label, done(tag, cond, N)) for label, tag, cond in SERIES]
@@ -92,7 +120,7 @@ def cost():
 
 if __name__ == "__main__":
     IMG.mkdir(parents=True, exist_ok=True)
-    for name, f in (("suites", suites), ("cost", cost)):
+    for name, f in (("suites", suites), ("cost", cost), ("harder", harder)):
         fig = f()
         fig.savefig(IMG / f"{name}.svg", bbox_inches="tight")
         fig.savefig(IMG / f"{name}.png", dpi=110, bbox_inches="tight")

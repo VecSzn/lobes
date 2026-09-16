@@ -6,7 +6,9 @@ Six lobes on an 8 GB laptop GPU, five small models and one checker that is plain
 one job each. An answer counts when two of them reach it without seeing each other's
 work, and what a program printed beats what a model wrote. The eval asks one question:
 does that buy anything over one 9B model with no scaffolding at all? On the 320 items
-both can run it scores the same, on 59% of that 9B's tokens and 55% of its seconds.
+both can run it scores the same, on 59% of that 9B's tokens and 55% of its seconds. On 60
+harder items added afterwards, where the answer has to be computed rather than recalled, it
+scores 55 and 56 against that 9B's 31 — and there it is the expensive one, at 2.5x the tokens.
 
 ## Scores
 
@@ -47,10 +49,43 @@ thinking budget.
 
 Eleven of the 370 items came out differently between the two medium runs, and only 224
 ended on the same answer string. llama-server runs four items at once, batch composition
-changes the floating-point reductions, and one seed does not pin one token stream. The
-item-level reading, the witness statistics and the pre-registered hypotheses, four of
-eight failed, are in [eval/REPORT.md](eval/REPORT.md); the rules were written down before
-any run, in [eval/PREREG.md](eval/PREREG.md) and [eval/PREREG-v3.md](eval/PREREG-v3.md).
+changes the floating-point reductions, and one seed does not pin one token stream.
+
+## The harder half
+
+Two of the suites above were at a ceiling: this runtime had scored 30/30 on tools in every run
+for two versions, which measures nothing. So 30 harder items were written for each, with the
+old 30 left untouched so the numbers above still stand. Every expected value is computed in
+`eval/suites/make.py` and none is typed in. The new tools items need a computation long enough
+that no model this size reaches it by writing; the new multistep items are 4 to 6 step chains
+asking for three values each. Same box, same seed, same four workers, medium run twice.
+
+![correct on the 30 harder items of each suite, higher is better](docs/img/harder.svg)
+
+| the 30 added to each suite | bare 9B | Lobes, medium (two runs) | Lobes, high | tokens per item, 9B | medium | high | seconds per item, 9B | medium | high |
+|---|---|---|---|---|---|---|---|---|---|
+| tools, 30 harder | 11 | 30, 28 | 29 | 6,662 | 12,776 | 27,368 | 54 | 51 | 121 |
+| multistep, 30 harder | 20 | 25, 28 | 29 | 5,260 | 16,425 | 35,747 | 41 | 68 | 162 |
+| the 60 together | 31 | 55, 56 | 58 | 5,961 | 14,601 | 31,558 | 48 | 60 | 141 |
+
+The two medium runs are 4 items apart here, the same noise as before, so tools at 30 and 28
+against 11 and multistep at 25 and 28 against 20 are both real and the second is not real by
+much. What the tools gap is not: both suites reward running a program and the bare 9B has no
+tools, so part of those 19 points is the architecture and part is having a python interpreter.
+Nothing in this eval separates the two, and the comparison is deliberately against the 9B as
+you would actually run it rather than against an ablation of this runtime.
+
+The cost claim at the top of this page does not carry onto these items and is not meant to.
+Where a single sample gets the answer, splitting the work saves the 9B's long think; where it
+does not, this runtime pays for several witnesses and a program each, 2.5x the tokens over the
+60. It is still 1.25x on seconds rather than 2.5x, because its calls overlap where the 9B's
+thinking is one serial stream. High is again not worth running: 58 against a medium band of 55
+to 56, for 2.2x the tokens.
+
+The item-level reading, the witness statistics and the pre-registered hypotheses, four of
+eight failed in v3 and three of seven in v4, are in [eval/REPORT.md](eval/REPORT.md); the
+rules were written down before any run, in [eval/PREREG.md](eval/PREREG.md),
+[eval/PREREG-v3.md](eval/PREREG-v3.md) and [eval/PREREG-v4.md](eval/PREREG-v4.md).
 
 ## Models
 
