@@ -43,11 +43,6 @@ models:
     repo: unsloth/gemma-4-E2B-it-GGUF
     file: gemma-4-E2B-it-Q4_K_M.gguf
     vram_mb: 1700
-  nemotron-nano-4b:
-    repo: lmstudio-community/NVIDIA-Nemotron-3-Nano-4B-GGUF
-    file: NVIDIA-Nemotron-3-Nano-4B-Q4_K_M.gguf
-    vram_mb: 3200
-    thinking: true
   qwen3.5-9b:
     repo: unsloth/Qwen3.5-9B-GGUF
     file: Qwen3.5-9B-IQ4_XS.gguf

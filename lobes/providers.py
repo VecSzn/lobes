@@ -66,8 +66,8 @@ def chat(provider, model, messages, *, schema=None, images=None, thinking=None,
         else:
             messages.insert(0, {"role": "system", "content": hint})
         body["response_format"] = {"type": "json_schema", "json_schema": {"name": "out", "schema": schema}}
-    # always said explicitly: llama-server turns thinking on by default for any template that has it (gemma4 did
-    # ~900 tokens of it per language call); Qwen3.5, Nemotron 3 and gemma4 all read enable_thinking
+    # always said explicitly: llama-server turns thinking on by default for any template that has it
+    # (~900 tokens of it per language call here), and every template in the roster reads enable_thinking
     body["chat_template_kwargs"] = {"enable_thinking": bool(thinking)}
 
     t0 = time.perf_counter()
