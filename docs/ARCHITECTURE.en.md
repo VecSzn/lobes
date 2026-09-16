@@ -131,7 +131,7 @@ Verdict      pass / retry / conflict + evidence basis + notes
 Envelope     request kind + answer + uncertainties + confidence + next action
 ```
 
-The schemas live in `lobes/schema.py` and are also exported as JSON schemas for constrained decoding.
+The schemas live in `lobes/schema.py` and are also exported as JSON schemas for constrained decoding. `Witness` is the exception: it never reaches a model, so it is a plain dataclass in `lobes/lobe/__init__.py`.
 
 ## Processes
 

@@ -1,5 +1,7 @@
 # Lobes 设计
 
+中文 | [English](ARCHITECTURE.en.md)
+
 这篇写的是现在的样子：六个脑叶各干什么、一次请求怎么走、值怎么定、档位和上限、代码怎么组织、评测怎么设。为什么改成这样、一路试过什么，在 docs/DECISIONS.md；数字在 eval/REPORT.md。
 
 ## 机器与后端
