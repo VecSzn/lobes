@@ -1,47 +1,80 @@
-"""Executive: the model classifies the goal, nothing else is decided here. It writes no plan: a plan in the
-shared view made the 1.2B's reading of the task everyone's premise (PREREG-v3)."""
-from ..schema import Confidence, Envelope, Next
+"""Executive: decides whether a request is simple or hard, and in a profile with experts which expert answers it.
+A simple one gets a quick answer from reasoning, tools included; a hard one gets thinking at the request's level and
+a review. The difficulty model is a classifier tuned to answer easy, medium or hard to the prompt below."""
+import threading
+import time
 
-CLASS_SCHEMA = {"type": "object", "additionalProperties": False, "required": ["kind", "needs_tool"],
-                "properties": {"kind": {"enum": ["chat", "math", "code", "qa"]}, "needs_tool": {"type": "boolean"}}}
-CLASS_SYS = """Classify the user's message into one kind:
-- chat: a greeting, thanks, or small talk with nothing to look up or work out.
-- code: the user wants source code written, completed, fixed or explained (a function, a script, a class, a regex).
-- math: the answer is a number or quantity to work out from the message: arithmetic, a word problem, dates, counting, unit conversion.
-- qa: a fact or explanation to answer from knowledge; nothing to compute.
-needs_tool: true when running a program would help get the answer right (any calculation, hashing, file or web access); false for chat, trivia and opinions.
-Examples:
-"hey, how's it going" -> chat, false
-"Complete this python function: def is_palindrome(s: str):" -> code, true
-"how do I reverse a string in javascript" -> code, false
-"A train leaves at 3pm going 60 mph. How far has it gone by 5:30pm?" -> math, true
-"what is 2 to the power 100 modulo 97" -> math, true
-"who painted the Mona Lisa" -> qa, false
-"read notes.txt and tell me how many lines mention Tuesday" -> qa, true"""
-FAST_SYS = "You are Lobes, a local assistant. Reply in one or two sentences, in the user's language."
+SYS = ("You are a query difficulty classifier for an LLM routing system.\nClassify each query as easy, medium, or hard "
+       "based on the cognitive depth and domain expertise required to answer correctly.\n"
+       "Respond with ONLY one word: easy, medium, or hard.")
+
+TOPICS = {       # a profile fills the ones it has an expert for; the router reads these lines
+    "chat": "greetings, thanks, small talk, or a short everyday question with nothing to look up or work out",
+    "code": "writing, fixing, explaining or running code; shell commands; anything about files, folders or projects on the computer",
+    "math": "a number or quantity to work out: arithmetic, word problems, algebra, probability, dates, units",
+    "documents": "the text to work on is pasted into the message itself: summarize, translate, rewrite, or answer from it",
+    "knowledge": "a fact or explanation about the world: history, science, people, places, events",
+}
+EXAMPLES = [
+    ("hey, how's it going", "chat"),
+    ("Complete this python function: def is_palindrome(s: str):", "code"),
+    ("why does open() raise UnicodeDecodeError on this csv", "code"),
+    ("what is the project in ~/work/site about", "code"),
+    ("看一下 C:\\data 里的 notes.md 讲了什么", "code"),
+    ("A train leaves at 3pm going 60 mph. How far has it gone by 5:30pm?", "math"),
+    ("what is 2 to the power 100 modulo 97", "math"),
+    ("Summarize this contract in five bullet points: <the contract>", "documents"),
+    ("who painted the Mona Lisa", "knowledge"),
+    ("what caused the fall of the Western Roman Empire", "knowledge"),
+]
+_seen = {}       # (profile, tool call id) -> (route, topic, now, problems, checked) of the request that made the call
+_lock = threading.Lock()
+
+
+def ends(text, head=1200, tail=400):
+    """The start and end of a long request, where the ask usually is; a whole document on the CPU takes seconds."""
+    text = text.strip()
+    return text if len(text) <= head + tail else f"{text[:head]}\n...\n{text[-tail:]}"
 
 
 def intake(ctx, state):
-    if state.images:
-        state.task_class = "vision"
+    # a client's tool step continues the request that made the call, even after the client compacted that request away
+    hit = _seen.get((ctx.profile, state.step)) if state.continues else None
+    if hit:
+        state.route, state.topic, state.now, problems, state.checked, state.requirements = hit
+        state.problems = list(problems)
         return
-    if not ctx.is_model("executive"):
-        state.needs_tool = True        # no classifier: the program witnesses run for everything
-        return
-    r = ctx.chat(state, "executive", [{"role": "system", "content": CLASS_SYS}, {"role": "user", "content": state.goal.strip()}],
-                 schema=CLASS_SCHEMA, thinking=False, max_tokens=40)
-    kind = state.kind = r.data["kind"] if r.data else "qa"
-    if kind == "chat":
-        state.task_class, state.route = "chat", "fast"
-    else:
-        # code is not a route: the 1B cannot tell "write a program" from "use one", so a program witness runs
-        # and the reasoning lobe hands back source only when the goal wants source
-        state.needs_tool = kind in ("math", "code") or not r.data or r.data["needs_tool"]
+    state.now = time.strftime("%Y-%m-%d %A %H:%M")
+    topics = [t for t in TOPICS if ctx.is_model(t)]
+    if topics and ctx.is_model("router") and not state.images:
+        state.topic = route(ctx, state, topics)
+    if state.images or not ctx.is_model("executive"):
+        return                  # images go through perception and a review; without a classifier everything is hard
+    r = ctx.chat(state, "executive", [{"role": "system", "content": SYS},
+                                      {"role": "user", "content": "Classify: " + ends(state.goal)}],
+                 temperature=0, max_tokens=5)
+    # only a clear easy skips the review: given a request full of numbers the classifier sometimes starts answering it
+    state.route = "simple" if r.text.strip().lower().startswith("easy") else "hard"
 
 
-def fast(ctx, state):
-    lobe = "executive" if ctx.is_model("executive") else "reasoning"
-    r = ctx.chat(state, lobe, [{"role": "system", "content": FAST_SYS}, {"role": "user", "content": state.goal}],
-                 thinking=False, max_tokens=200)
-    return Envelope(kind="final", goal=state.goal, answer=r.text.strip(),
-                    confidence=Confidence(score=0.5, basis="self"), next=Next(action="answer"))
+def remember(ctx, state):
+    """Called when a reply hands tool calls to the client."""
+    with _lock:
+        for call in state.tool_calls:
+            _seen[(ctx.profile, call.get("id"))] = (state.route, state.topic, state.now, list(state.problems),
+                                                    state.checked, state.requirements)
+        while len(_seen) > 1024:        # oldest first, so other sessions' live turns keep theirs
+            _seen.pop(next(iter(_seen)))
+
+
+def route(ctx, state, topics):
+    """-> the topic whose expert answers, or None when the router's reply does not parse."""
+    sys = ("Pick the expert for the user's latest message.\n"
+           + "\n".join(f"- {t}: {TOPICS[t]}" for t in topics)
+           + "\nExamples:\n" + "\n".join(f'"{q}" -> {t}' for q, t in EXAMPLES if t in topics))
+    ask = (f"Their previous message: {ends(state.earlier, 300, 100)}\n\nLatest: " if state.earlier else "") + ends(state.goal)
+    schema = {"type": "object", "additionalProperties": False, "required": ["topic"],
+              "properties": {"topic": {"enum": topics}}}
+    r = ctx.chat(state, "router", [{"role": "system", "content": sys}, {"role": "user", "content": ask}],
+                 schema=schema, temperature=0, max_tokens=20)
+    return r.data["topic"] if r.data else None

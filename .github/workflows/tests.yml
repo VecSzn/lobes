@@ -12,5 +12,4 @@ jobs:
           python-version: "3.12"
       - run: pip install -e .[dev,eval]
       - run: pytest -q
-      # -W: lobes.lobe imports verifier, so running it as __main__ re-executes an already-imported module
-      - run: python -m lobes.tools && python -W ignore::RuntimeWarning -m lobes.lobe.verifier && python -m lobes.eval
+      - run: python -m lobes.tools && python -m lobes.eval

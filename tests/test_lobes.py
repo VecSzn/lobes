@@ -1,62 +1,698 @@
-"""No server needed: model calls and the router are faked. Run with `pytest`."""
+"""Offline contracts for request limits, tools, the relay and the eval harness."""
 import json
 
+import httpx
 import pytest
 
-from lobes import config, models, runner, tools
-from lobes.lobe import Witness, agree, settle, verifier
+from lobes import config, models, providers, runner, tools
 from lobes.providers import Reply
-from lobes.schema import Envelope, Next, Verdict
 
 
-def test_envelope_roundtrip():
-    e = Envelope(kind="final", goal="g", answer="42", next=Next(action="answer"))
-    assert Envelope.model_validate_json(e.model_dump_json()) == e
-    assert Verdict.model_validate({"verdict": "PASS"}).basis == "none"
+def reply(data=None, tokens=10, finish="stop", text=None, calls=()):
+    return Reply(json.dumps(data) if text is None else text, data, None,
+                 {"prompt_tokens": 20, "completion_tokens": tokens, "total_tokens": tokens + 20}, 1, {}, finish,
+                 tool_calls=[{"id": f"c{i}", "type": "function",
+                              "function": {"name": name, "arguments": args if isinstance(args, str) else json.dumps(args)}}
+                             for i, (name, args) in enumerate(calls)])
 
 
-def test_python_tool_timeout(tmp_path, monkeypatch):
+def says(text):
+    return reply(text=text)
+
+
+def calls(*pairs):
+    return reply(text="", calls=pairs)
+
+
+def rewrites(**relay):
+    """Lists the review twice, so a rejection is rewritten. The shipped relay lists it once and notes it."""
+    return {"specialists": {"checks": {"medium": ["language", "language"]}, **relay}}
+
+
+@pytest.fixture
+def simulate(tmp_path, monkeypatch):
+    cfg = config.load()
+    cfg["_root"] = tmp_path
+    cfg["seed"] = 7
+    seen = []
+    monkeypatch.setattr(models.ModelManager, "validate", lambda self, names: {})
+    monkeypatch.setattr(models.ModelManager, "ensure", lambda self, name: None)
+
+    def run(goal, replies, **overrides):
+        kw = {k: overrides.pop(k) for k in ("images", "messages", "client_tools") if k in overrides}
+        cfg.update(overrides)
+        responses = {"executive": ["hard"], **replies}
+        counts = {}
+        by_model = {spec.split("/", 1)[1]: name for name, spec in cfg["profiles"][cfg["profile"]].items() if "/" in spec}
+
+        def chat(provider, model, messages, **kwargs):
+            lobe = by_model[model]
+            seen.append((lobe, [dict(m) for m in messages], kwargs))
+            choices = responses[lobe]
+            index = counts.get(lobe, 0)
+            counts[lobe] = index + 1
+            result = choices[min(index, len(choices) - 1)]
+            if isinstance(result, Exception):
+                raise result
+            return result if isinstance(result, Reply) else says(result) if isinstance(result, str) else reply(result)
+
+        monkeypatch.setattr(providers, "chat", chat)
+        state = runner.run(cfg, goal, **kw)
+        trace = [json.loads(line) for line in (tmp_path / "runs" / state.task_id / "trace.jsonl").read_text(encoding="utf-8").splitlines()]
+        return state, seen, trace
+    return run
+
+
+def test_model_written_code_runs_with_root_dropped(tmp_path):
+    # 09-19: a BFCL item asked for the machine to be switched off and the python tool ran it on the evaluation box
+    import os
+    drop = tools._drop()
+    if os.name != "posix" or os.geteuid() != 0:
+        assert drop == {}                       # nothing to drop, and asking costs nothing
+    else:
+        import pwd
+        who = pwd.getpwnam(tools.UNPRIVILEGED)
+        assert drop == {"user": who.pw_uid, "group": who.pw_gid, "extra_groups": []}
+        assert drop["group"] != 0               # root's group reads a 0701 home directory as the group class
+    assert tools.run("python", {"code": "print(6*7)"}, tmp_path)["stdout"].strip() == "42"   # and it still runs
+
+
+def test_tools_timeout_and_file_boundary(tmp_path, monkeypatch):
     monkeypatch.setattr(tools, "TIMEOUT", 1)
-    assert tools.run("python", {"code": "import time; time.sleep(5)"}, tmp_path)["exit"] == -1
-    assert tools.run("python", {"code": "print(6*7)"}, tmp_path)["stdout"].strip() == "42"
-    assert tools.run("nope", {}, tmp_path)["exit"] == 2
-
-
-def test_python_tool_unescapes_one_liners(tmp_path):
-    assert tools.run("python", {"code": "x = 1  # one\\nprint(x)"}, tmp_path)["stdout"].strip() == "1"
+    slow = tools.run("python", {"code": "import time\nprint('started', flush=True)\ntime.sleep(5)"}, tmp_path)
+    assert slow["exit"] == -1 and isinstance(slow["stdout"], str)
+    json.dumps(slow)
+    assert tools.run("python", {"code": "x=6\\nprint(x*7)"}, tmp_path)["stdout"].strip() == "42"
     assert tools.run("python", {"code": "print('a\\nb')"}, tmp_path)["stdout"] == "a\nb\n"
     assert tools.run("python", {"code": "s = 'a\\nb'\nprint(len(s))"}, tmp_path)["stdout"].strip() == "3"
+    assert tools.run("python", {"code": "x = 6\nx, x * 7"}, tmp_path)["stdout"].strip() == "(6, 42)"    # came back empty
+    assert tools.run("python", {"code": "data = (\n    'a',\n    'b',\n)"}, tmp_path)["stdout"] == ""     # was echoed as ()
+    assert tools.run("web_fetch", {"url": "http://localhost:PORT/x"}, tmp_path)["exit"] == 1     # crashed the request
+    assert tools.run("write_file", {"path": "../outside", "content": "x"}, tmp_path)["exit"] != 0
+    assert tools.run("no_such_tool", {}, tmp_path)["exit"] != 0
+    assert tools.run("edit_file", {"path": ".", "old": "a", "new": "b"}, tmp_path)["exit"] == 1     # HumanEval-28 crashed on this
+    assert tools.run("write_file", {"path": ".", "content": "x"}, tmp_path)["exit"] == 1
 
 
-def test_agree_and_settle():
-    assert verifier.same("The answer is 42.", "42") and verifier.same("1,000", "1000.0")
-    assert not verifier.same("42", "43") and not verifier.same("Paris", "Berlin")
-    assert verifier.same("a", "a") and not verifier.same("a", "the") and not verifier.same("e", "wrote 71 chars to s.txt")
-    assert not verifier.restates("print(s[::-1])", "1") and verifier.restates("print(391)", "391")
-    assert not verifier.restates("pow(3, 100, 1000000)", "522001")
-    goal = "20 footballs cost 5 each, how many and what total?"
-    assert agree("40\n200", "40 footballs, total 200", goal) and agree("200", "the total is 200", goal)
-    assert not agree("70", "40", goal) and agree("20", "20", goal) and not agree("", "20", goal)
-    assert agree("Monday", "It is a Monday.", "what day") and not agree("Monday", "Tuesday", "what day")
-    assert agree("60\n30\n15", "15", goal) and agree("60 | 30 | 15", "15", goal) and not agree("8\n0\n8", "4", goal)
-    assert not agree("13270\n3\n62", "13269 Thursday 62", "days from 1990-05-17 to 2026-09-14, and the weekday")
-    assert not agree("18271.111077\n18271.111\n28", "333833500, 18271.111, 28", "sum of squares to 1000")
-    assert agree("18271.111\n28", "333833500, 18271.111, 28", "sum of squares to 1000")
-    assert agree("27660\n110", "Sum: 27660, Count: 110", "sum and count") and not agree("9\n7", "2\n7", "check digits")
-    assert not agree("15511210043330985984000000\n26\n3\n72", "26, 6, 72", "25 factorial, digits, zeros, digit sum")
-    ws = [Witness("motor", "390", ran=True), Witness("reasoning", "391", ran=True), Witness("reasoning", "391")]
-    best, basis = settle(ws, 2, None, goal)
-    assert best is ws[1] and basis == "evidence"
-    assert settle(ws[:2], 2, None, goal) is None
-    assert settle([ws[2]], 1, None, goal) == (ws[2], "none")
-    assert settle([Witness("a", "Alice"), Witness("b", "Alice")], 2, None, "who")[1] == "consistency"
-    g = "solve for x: 5x - 3 = 2x + 21"       # two model-written 7s do not outvote the program that printed 8
-    assert settle([Witness("r", "7"), Witness("v", "x = 7"), Witness("m", "8", ran=True)], 2, None, g) is None
-    assert settle([Witness("r", "7"), Witness("v", "x = 7")], 2, None, g)[1] == "consistency"
-    ws = [Witness("perception", "would"), Witness("reasoning", "will"), Witness("ocr", "will", ran=True), Witness("reasoning", "will")]
-    assert settle(ws, 2, "perception", "the word") is None       # nobody who saw the image is in the pair
-    best, basis = settle(ws + [Witness("ocr", "would", ran=True)], 2, "perception", "the word")
-    assert (best.value, basis) == ("would", "evidence")
+def test_repo_suite_computes_its_answers_from_the_package(tmp_path):
+    from lobes.hard import repo
+    pkg = tmp_path / "repo"                     # already there, so corpus() keeps it instead of copying the real one
+    (pkg / "sub").mkdir(parents=True)
+    (pkg / "alpha.py").write_text("LIMIT = 7\n\ndef seeker(one, two, tail):\n    return tail\n", encoding="utf-8")
+    (pkg / "sub" / "beta.py").write_text("def other():\n    return seeker(1, 2, 3)\n", encoding="utf-8")
+    gold = {it["id"]: it["gold"] for it in repo.load(tmp_path)}
+    assert gold["repo-where-seeker"] == "alpha.py"
+    assert gold["repo-value-LIMIT"] == "7"
+    assert gold["repo-calls-seeker"] == "beta.py"        # the file calling it, not the one defining it
+    assert gold["repo-param-seeker"] == "tail"
+    assert "repo-where-other" in gold and "repo-param-other" not in gold      # too few parameters to ask about
+
+    (pkg / "sub" / "alpha.py").write_text("", encoding="utf-8")
+    with pytest.raises(ValueError):             # a shared file name would make every where answer ambiguous
+        repo.load(tmp_path)
+
+
+def test_web_search_reads_the_url_out_of_the_redirect(tmp_path, monkeypatch):
+    # every duckduckgo result url arrives percent-encoded in the uddg parameter of its own redirect
+    page = ('<div class="result"><h2><a rel="nofollow" class="result__a"'
+            ' href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fexample.com%2Fa%3Fb%3D1&amp;rut=ff">An &amp; example</a></h2>'
+            '<a class="result__snippet" href="//duckduckgo.com/l/?uddg=x">The <b>snippet</b>.</a></div>'
+            '<div class="result"><a class="result__a" href="https://example.org/">No redirect</a></div>')
+    monkeypatch.setattr(tools.httpx, "get", lambda url, **kw: httpx.Response(
+        200, request=httpx.Request("GET", url), text=page))
+    found = tools.run("web_search", {"query": "an example"}, tmp_path)
+    assert found["exit"] == 0
+    assert found["content"].split("\n\n") == ["An & example\nhttps://example.com/a?b=1\nThe snippet .",
+                                              "No redirect\nhttps://example.org/"]
+
+    monkeypatch.setattr(tools.httpx, "get", lambda url, **kw: httpx.Response(
+        200, request=httpx.Request("GET", url), text="<html>no results</html>"))
+    assert tools.run("web_search", {"query": "x"}, tmp_path)["exit"] == 1       # the markup moved, and it says so
+
+
+def test_simple_request_uses_tools_without_thinking_or_review(simulate):
+    state, seen, trace = simulate("what time is it", {
+        "executive": ["easy"],
+        "reasoning": [calls(("python", {"code": "print('12:00')"})), "It is 12:00."]})
+    assert state.answer == "It is 12:00." and state.route == "simple"
+    assert [lobe for lobe, *_ in seen] == ["executive", "reasoning", "reasoning"]
+    assert [kw["thinking_budget"] for *_, kw in seen] == [None, runner.SIMPLE_THINK, runner.SIMPLE_THINK]
+    assert seen[2][1][1]["tool_calls"][0]["function"]["name"] == "python"
+    assert seen[2][1][-1] == {"role": "tool", "tool_call_id": "c0", "content": "12:00"}
+    assert {t["function"]["name"] for t in seen[1][2]["tools"]} == {"python", "motor"}
+
+
+def test_hard_request_thinks_at_its_level_and_a_passing_review_ships_the_draft(simulate):
+    state, seen, _ = simulate("A box holds 23 parts. How many parts are in 17 boxes?", {
+        "reasoning": [calls(("python", {"code": "print(17 * 23)"})), "17 boxes hold 391 parts."],
+        "language": ["OK"]}, effort="low")
+    assert state.answer == "17 boxes hold 391 parts." and not state.problems
+    assert [kw["thinking_budget"] for lobe, _, kw in seen if lobe == "reasoning"] == [1024, 1024]
+    lobe, messages, kw = seen[-1]
+    assert lobe == "language" and kw["tools"] is None
+    work = messages[-1]["content"]
+    assert "print(17 * 23)" in work and "391" in work and "17 boxes hold 391 parts." in work
+    assert "Result" in work.split("print(17 * 23)")[1]
+
+
+def test_send_back_repairs_once_in_the_same_conversation(simulate):
+    state, seen, trace = simulate("What is 2 to the power 10?", {
+        "reasoning": ["2^10 = 1000", "2^10 = 1024"],
+        "language": ["2^10 is 1024, not 1000", "OK"]}, relays=rewrites())
+    assert state.answer == "2^10 = 1024" and state.problems == ["2^10 is 1024, not 1000"]
+    repair = [messages for lobe, messages, _ in seen if lobe == "reasoning"][-1]
+    assert repair[1] == {"role": "assistant", "content": "2^10 = 1000"}
+    assert repair[-1]["role"] == "user" and "1024, not 1000" in repair[-1]["content"]
+    assert not state.uncertainties
+
+
+def test_the_shipped_relay_ships_the_draft_a_review_rejected_and_notes_why(simulate):
+    state, seen, trace = simulate("What is 2 to the power 10?", {
+        "reasoning": ["2^10 = 1000"], "language": ["2^10 is 1024, not 1000"]})
+    assert state.answer == "2^10 = 1000" and state.problems == ["2^10 is 1024, not 1000"]
+    assert state.uncertainties == ["A review still found a problem: 2^10 is 1024, not 1000"]
+    assert [lobe for lobe, *_ in seen] == ["executive", "reasoning", "language"]     # the expert is not asked again
+    assert [(r["by"], r["ok"]) for r in trace if r["kind"] == "review"] == [("language", False)]
+
+
+def test_the_review_model_can_read_the_request_in_front_of_the_draft_instead(simulate):
+    # ifeval 09-18: 25 wrong answers, every one of them a reply that met all of the request's conditions but one
+    state, seen, trace = simulate("Write a resume with no commas.", {
+        "reasoning": ["Here it is."], "language": [{"requirements": ["a resume", "no commas anywhere"]}]},
+        relays={"specialists": {"language": "requirements"}})
+    assert [lobe for lobe, *_ in seen] == ["executive", "language", "reasoning"]     # asked first, and only once
+    assert ("What another lobe read the request as asking of the reply:\n"
+            "- a resume\n- no commas anywhere") in seen[2][1][0]["content"]
+    assert state.answer == "Here it is." and not state.problems      # nothing reviews the draft, so nothing rejects it
+    assert [r["text"] for r in trace if r["kind"] == "requirements"] == ["- a resume\n- no commas anywhere"]
+    # the simple route leaves it out, the same as the review it replaces
+    mark = len(seen)
+    _, seen, _ = simulate("hi", {"executive": ["easy"], "reasoning": ["hello"]},
+                          relays={"specialists": {"language": "requirements"}})
+    assert [lobe for lobe, *_ in seen[mark:]] == ["executive", "reasoning"]
+
+
+def test_the_reviewer_that_sent_a_draft_back_does_not_read_the_repair_again(simulate):
+    # its second rejection could only add a note; the repaired draft shipped either way
+    state, seen, _ = simulate("What is 2 to the power 10?", {
+        "reasoning": ["1000", "1024"], "language": ["wrong"]}, relays=rewrites())
+    assert state.answer == "1024" and state.problems == ["wrong"] and not state.uncertainties
+    assert [lobe for lobe, *_ in seen] == ["executive", "reasoning", "language", "reasoning"]
+    # a different last checker still reads the repair (the self-check is the expert's model, so its reply is in reasoning's list)
+    state, seen, _ = simulate("What is 2 to the power 10?", {"reasoning": ["1000", "wrong", "1024"], "language": ["still wrong"]},
+                              relays={"specialists": {"checks": {"medium": ["check", "language"]}}})
+    assert state.answer == "1024" and state.problems == ["wrong", "still wrong"]
+    assert state.uncertainties == ["A review still found a problem: still wrong"]
+
+
+def test_a_reply_that_ends_inside_its_thinking_is_asked_again_to_write_it_out(simulate):
+    ended = Reply("", None, "The OS is Windows 10, so the answer is: Windows 10.", {"total_tokens": 5}, 1, {})
+    state, seen, _ = simulate("which OS is this", {"executive": ["easy"], "reasoning": [ended, "Windows 10."]})
+    assert state.answer == "Windows 10."
+    asked = [(msgs, kw) for lobe, msgs, kw in seen if lobe == "reasoning"]
+    assert [kw["thinking"] for _, kw in asked] == [True, False]
+    assert asked[1][0][-1] == {"role": "assistant", "content": "", "reasoning_content": ended.reasoning}
+    # the reply that stopped at once on 09-17 left "未能生成可用的回答" in Codex
+    state, _, _ = simulate("which OS is this", {"executive": ["easy"], "reasoning": [ended, ""]})
+    assert state.answer == ended.reasoning
+
+
+def test_a_body_cut_off_at_the_token_limit_is_asked_for_its_conclusion(simulate):
+    # GPQA 09-18: the work was written and the last line was not, and the draft alone scored zero on 34% of items
+    half = reply(text="Star A sits at declination -30, so from Paranal it", finish="length")
+    state, seen, _ = simulate("which stars are visible",
+                              {"executive": ["easy"], "reasoning": [half, r"So the answer is \boxed{C}."]})
+    assert state.answer == "Star A sits at declination -30, so from Paranal it\n\n" + r"So the answer is \boxed{C}."
+    asked = [(msgs, kw) for lobe, msgs, kw in seen if lobe == "reasoning"]
+    assert [kw["thinking"] for _, kw in asked] == [True, False]      # the conclusion is stated, not thought about
+    assert asked[1][0][-2] == {"role": "assistant", "content": half.text}
+    assert asked[1][1]["max_tokens"] == runner.CONCLUSION
+    # nothing to add: the draft stays instead of being blanked
+    state, _, _ = simulate("which stars are visible", {"executive": ["easy"], "reasoning": [half, ""]})
+    assert state.answer == half.text
+
+
+def test_a_conclusion_that_is_itself_cut_off_is_dropped(simulate):
+    # GPQA 09-18: on the 23 items whose conclusion was cut in its turn, appending it scored 1 and left 19 without
+    # an answer, against 7 and 13 for the draft on its own: a reader takes the last block for the answer
+    half = reply(text="Star A sits at declination -30, so from Paranal it", finish="length")
+    again = reply(text="To determine which stars are visible we check two conditions. First,", finish="length")
+    state, seen, _ = simulate("which stars are visible",
+                              {"executive": ["easy"], "reasoning": [half, again, r"\boxed{C}"]})
+    assert state.answer == half.text        # the draft ships alone; the cut conclusion is not appended
+    assert [lobe for lobe, _, _ in seen if lobe == "reasoning"] == ["reasoning"] * 2      # and is not asked again
+
+
+def test_a_call_lobes_runs_that_repeats_with_the_same_result_thinks_then_stops_with_the_result(simulate):
+    again = calls(("python", {"code": "x = 1"}))
+    state, seen, trace = simulate("what is x", {"executive": ["easy"], "reasoning": [again, again, again, "x is 1"]},
+                                  relays={"specialists": {"think": "off"}})
+    assert state.answer.startswith("python returned the same result three times")
+    asked = [kw for lobe, _, kw in seen if lobe == "reasoning"]
+    assert [kw["thinking_budget"] for kw in asked] == [None, None, runner.EFFORT["medium"]["think"]]
+    assert [r["tool"] for r in trace if r["kind"] == "stalled"] == ["python"] and not state.capped and state.stopped
+    # two snippets sent in turn, each failing the same way: the call cap used to end it (tools-64, 09-17)
+    n, other = len(seen), calls(("python", {"code": "y = 2"}))
+    state, seen, trace = simulate("what is x", {"executive": ["easy"], "reasoning": [again, other, again, other, again, "x is 1"]},
+                                  relays={"specialists": {"think": "off"}})
+    think = runner.EFFORT["medium"]["think"]
+    assert [kw["thinking_budget"] for lobe, _, kw in seen[n:] if lobe == "reasoning"] == [None, None, None, think, think]
+    assert len([r for r in trace if r["kind"] == "stalled"]) == 2 and state.stopped and not state.capped
+
+
+def test_a_call_cut_off_by_the_token_limit_runs_nothing_and_is_retried_with_thinking(simulate):
+    cut = reply(text="I'll write it.", finish="length", calls=[("write_file", '{"path": "a.txt", "content": "3486784401348')])
+    state, seen, trace = simulate("write 3**500 to a.txt", {"executive": ["easy"],
+                                  "reasoning": [cut, calls(("python", {"code": "print(1)"})), "done"]}, relays={"specialists": {"think": "off"}})
+    asked = [(msgs, kw) for lobe, msgs, kw in seen if lobe == "reasoning"]
+    think, answer = runner.EFFORT["medium"]["think"], runner.ANSWER
+    assert [kw["thinking_budget"] for _, kw in asked] == [None] + [think] * 2    # like a stall, it stays up
+    assert [kw["max_tokens"] for _, kw in asked] == [answer, think + 2 * answer, think + answer]    # the retry has room for a long call
+    assert "token limit" in asked[1][0][-1]["content"] and asked[1][0][-1]["role"] == "tool"
+    assert state.answer == "done" and [r["tools"] for r in trace if r["kind"] == "cut"] == [["write_file"]]
+    bash = {"type": "function", "function": {"name": "bash", "parameters": {"type": "object"}}}
+    state, seen, _ = simulate("write 3**500 to a.txt", {"executive": ["easy"], "reasoning": [cut, calls(("bash", {"command": "ls"}))]},
+                              relays={"specialists": {"think": "off"}}, client_tools=[bash], messages=[{"role": "user", "content": "write 3**500 to a.txt"}])
+    assert [c["function"]["name"] for c in state.tool_calls] == ["bash"]     # the client never gets the broken call
+    # cut again, the call does not fit: the request stops and says why instead of retrying until a cap
+    n = len(seen)
+    state, seen, trace = simulate("write 3**500 to a.txt", {"executive": ["easy"], "reasoning": [cut, cut, "inline"]},
+                                  client_tools=[bash], messages=[{"role": "user", "content": "write 3**500 to a.txt"}])
+    assert len([lobe for lobe, *_ in seen[n:] if lobe == "reasoning"]) == 2 and not state.tool_calls and not state.capped
+    assert state.answer.startswith("The write_file call reached the token limit twice") and state.stopped
+    assert len([r for r in trace if r["kind"] == "cut"]) == 2
+    # a retry that ends inside its thinking is asked again with the same doubled room
+    ended = Reply("", None, "It is long.", {"total_tokens": 5}, 1, {})
+    n = len(seen)
+    simulate("write 3**500 to a.txt", {"executive": ["easy"], "reasoning": [cut, ended, cut]},
+             client_tools=[bash], messages=[{"role": "user", "content": "write 3**500 to a.txt"}])
+    assert [kw["max_tokens"] for lobe, _, kw in seen[n:] if lobe == "reasoning"][2] == 2 * answer
+    # a rewrite that stops keeps the draft the review sent back, with both reasons as notes
+    state, _, _ = simulate("write 3**500 to a.txt", {"reasoning": ["Here it is.", cut, cut], "language": ["wrong"]},
+                           relays=rewrites(think="off"))
+    assert state.answer == "Here it is." and not state.stopped
+    assert state.uncertainties == ["A review still found a problem: wrong",
+                                   "The write_file call reached the token limit twice before its arguments were complete, so I stopped."]
+
+
+def test_think_first_thinks_on_the_first_call_of_a_draft_and_of_a_rewrite(simulate):
+    step = calls(("python", {"code": "print(17 * 23)"}))
+    state, seen, _ = simulate("How many parts in 17 boxes of 23?", {
+        "reasoning": [step, "381 parts", calls(("python", {"code": "print(23 * 17)"})), "391 parts"], "language": ["17 x 23 is 391."]},
+        relays=rewrites(think="first"))
+    think = runner.EFFORT["medium"]["think"]
+    assert state.answer == "391 parts"
+    assert [kw["thinking_budget"] for lobe, _, kw in seen if lobe == "reasoning"] == [think, None, think, None]
+    bash = {"type": "function", "function": {"name": "bash", "parameters": {"type": "object"}}}
+    ask = [{"role": "user", "content": "list the files"}]
+    done = [{"role": "assistant", "content": "", "tool_calls": [{"id": "c1", "type": "function", "function": {"name": "bash", "arguments": '{"command": "ls"}'}}]},
+            {"role": "tool", "tool_call_id": "c1", "content": "a.txt"}]
+    for messages, budget in ((ask, think), (ask + done, None)):
+        _, seen, _ = simulate("list the files", {"reasoning": [step]}, relays={"specialists": {"think": "first"}},
+                              client_tools=[bash], messages=messages)
+        assert seen[-1][2]["thinking_budget"] == budget
+    # a client's tool result: the step goes without thinking, a rewrite after a review thinks
+    n = len(seen)
+    state, seen, _ = simulate("list the files", {"reasoning": ["381 parts", "391 parts"], "language": ["wrong"]},
+                              relays=rewrites(think="first"), client_tools=[bash], messages=ask + done)
+    assert state.answer == "391 parts"
+    assert [kw["thinking_budget"] for lobe, _, kw in seen[n:] if lobe == "reasoning"] == [None, think]
+    # the same call twice with the same result: the next step thinks even in a continuation
+    again = [{**done[0], "tool_calls": [{**done[0]["tool_calls"][0], "id": "c2"}]}, {**done[1], "tool_call_id": "c2"}]
+    _, seen, _ = simulate("list the files", {"executive": ["easy"], "reasoning": ["a.txt"]}, relays={"specialists": {"think": "first"}},
+                          client_tools=[bash], messages=ask + done + again)
+    assert seen[-1][2]["thinking_budget"] == think
+
+
+def test_motor_answers_the_request_and_keeps_the_results(simulate):
+    state, seen, _ = simulate("say hi from the shell", {
+        "executive": ["easy"],
+        "reasoning": [calls(("motor", {"request": "run echo hi in the shell"})), "The shell said hi."],
+        "motor": [calls(("shell", {"command": "echo hi"})), "The shell printed hi."]})
+    assert state.answer == "The shell said hi."
+    assert [lobe for lobe, *_ in seen] == ["executive", "reasoning", "motor", "motor", "reasoning"]
+    assert seen[2][1][-1]["content"] == "run echo hi in the shell"
+    assert [t["function"]["name"] for t in seen[2][2]["tools"]] == list(tools.TOOLS)
+    assert seen[3][2]["tools"] is None          # the answering turn runs no tool: another step goes through reasoning
+    given = seen[-1][1][-1]                     # what reasoning is handed: the hand's words, not the shell's output
+    assert given["role"] == "tool" and given["content"] == "The shell printed hi."
+
+    simulate("say hi from the shell", {
+        "executive": ["easy"],
+        "reasoning": [calls(("motor", {"request": "run echo hi in the shell"})), "ok"],
+        "motor": [calls(("shell", {"command": "echo hi"})), ""]})
+    raw = seen[-1][1][-1]                       # it ran the tools and said nothing: the results are all there is
+    assert raw["content"].startswith("shell ") and raw["content"].endswith("hi")
+
+
+def test_without_a_tool_hand_reasoning_holds_every_tool(simulate):
+    state, seen, _ = simulate("hello", {"reasoning": ["hi"]}, profile="bare-9b")
+    assert state.answer == "hi" and [lobe for lobe, *_ in seen] == ["reasoning"]
+    assert [t["function"]["name"] for t in seen[0][2]["tools"]] == list(tools.TOOLS)
+    assert seen[0][2]["thinking_budget"] == runner.EFFORT["medium"]["think"]
+
+
+def test_bad_tool_calls_are_answered_not_run(simulate, monkeypatch):
+    monkeypatch.setattr(tools, "run", lambda *a, **k: pytest.fail("must not run"))
+    bad = reply(text="", calls=[("shell", {"command": "echo hi"}), ("python", "print(1")])
+    _, seen, _ = simulate("x", {"reasoning": [bad, "ok"], "language": ["ok"]})
+    assert [m["content"] for m in seen[2][1][-2:]] == ["There is no tool named shell.", "The arguments were not a JSON object."]
+
+
+def test_a_relay_without_thinking_checks_every_answer_in_order(simulate):
+    relay = {"think": "off", "checks_on": "all", "recheck": True,
+             "checks": {"medium": ["check", "check", "language"]}}
+    state, seen, trace = simulate("How many parts in 17 boxes of 23?", {
+        "executive": ["easy"], "reasoning": ["381 parts", "OK", "17 x 23 is 391, not 381.", "391 parts"],
+        "language": ["OK"]}, relays={"specialists": relay})
+    assert state.answer == "391 parts" and state.problems == ["17 x 23 is 391, not 381."]
+    assert [lobe for lobe, *_ in seen] == ["executive"] + ["reasoning"] * 4 + ["language"]
+    assert not any(kw["thinking"] for *_, kw in seen)
+    assert [r["by"] for r in trace if r["kind"] == "review"] == ["check", "check", "language"]
+
+
+def test_an_escalating_relay_thinks_only_on_the_rewrite(simulate):
+    state, seen, _ = simulate("How many parts in 17 boxes of 23?", {
+        "reasoning": ["381 parts", "391 parts"], "language": ["17 x 23 is 391.", "OK"]},
+        relays=rewrites(think="escalate"))
+    assert state.answer == "391 parts"
+    assert [kw["thinking_budget"] for lobe, _, kw in seen if lobe == "reasoning"] == [None, runner.EFFORT["medium"]["think"]]
+
+
+def test_an_expert_model_can_set_its_own_think_mode(simulate):
+    cfg = config.load()
+    expert = cfg["profiles"][cfg["profile"]]["reasoning"].split("/", 1)[1]
+    models = {**cfg["models"], expert: {**cfg["models"][expert], "think": "escalate"}}
+    state, seen, _ = simulate("How many parts in 17 boxes of 23?", {
+        "reasoning": ["381 parts", "391 parts"], "language": ["17 x 23 is 391.", "OK"]}, models=models, relays=rewrites())
+    assert state.answer == "391 parts"
+    assert [kw["thinking_budget"] for lobe, _, kw in seen if lobe == "reasoning"] == [None, runner.EFFORT["medium"]["think"]]
+
+
+def test_a_client_call_repeated_with_the_same_result_is_read_with_thinking(simulate):
+    bash = {"type": "function", "function": {"name": "bash", "parameters": {"type": "object"}}}
+    step = lambda n, out: [{"role": "assistant", "content": "", "tool_calls": [
+        {"id": f"c{n}", "type": "function", "function": {"name": "bash", "arguments": '{"command": "ls", "justification": "x"}'}}]},
+        {"role": "tool", "tool_call_id": f"c{n}", "content": out}]
+    ask = [{"role": "user", "content": "list the files"}]
+    off, refused = {"specialists": {"think": "off"}}, "justification requires sandbox_permissions"
+    _, seen, trace = simulate("list the files", {"executive": ["easy"], "reasoning": ["a.txt"]}, relays=off,
+                             client_tools=[bash], messages=ask + step(1, refused) + step(2, "a.txt"))
+    assert seen[-1][2]["thinking_budget"] is None and not any(r["kind"] == "stalled" for r in trace)
+    _, seen, trace = simulate("list the files", {"executive": ["easy"], "reasoning": ["a.txt"]}, relays=off,
+                             client_tools=[bash], messages=ask + step(1, refused) + step(2, refused))
+    assert seen[-1][2]["thinking_budget"] == runner.EFFORT["medium"]["think"] and [r["tool"] for r in trace if r["kind"] == "stalled"] == ["bash"]
+    before = len(seen)      # simulate keeps every run's calls in one list
+    state, seen, trace = simulate("list the files", {"executive": ["easy"], "reasoning": ["a.txt"]}, relays=off, client_tools=[bash],
+                                  messages=ask + step(1, refused) + step(2, refused) + step(3, refused))
+    assert refused in state.answer and not state.tool_calls and "reasoning" not in [lobe for lobe, *_ in seen[before:]]
+    assert any(r["kind"] == "stop" for r in trace) and not any(r["kind"] == "stalled" for r in trace)
+
+
+@pytest.mark.parametrize("error", [
+    httpx.HTTPStatusError("500", request=httpx.Request("POST", "http://test"), response=httpx.Response(500)),
+    RuntimeError("gemma4-e2b failed to load")])
+def test_review_server_error_keeps_the_draft(simulate, error):
+    state, _, trace = simulate("How many parts in 17 boxes of 23?", {"reasoning": ["391 parts"], "language": [error]})
+    assert state.answer == "391 parts"
+    assert any(record["kind"] == "language_error" for record in trace)
+
+
+def test_each_call_gets_its_own_seed(simulate):
+    _, seen, _ = simulate("x", {"reasoning": [calls(("python", {"code": "print(1)"})), "1"], "language": ["OK"]})
+    assert [kw["seed"] for *_, kw in seen] == [7, 8, 9, 10]
+
+
+def test_call_cap_ends_a_tool_loop_with_the_answer_it_has(simulate, monkeypatch):
+    monkeypatch.setitem(runner.EFFORT["medium"], "calls", 3)
+    loop = calls(("python", {"code": "print(1)"}))
+    state, seen, _ = simulate("loop", {"reasoning": [loop, loop, "1, from the run above."]})
+    # the cap stops the tool loop, and then the request still owes an answer: one more call, no tools
+    assert len(seen) == 4 and state.capped == "calls" and state.answer == "1, from the run above."
+    assert state.uncertainties == ["Stopped at the request's calls limit."]
+    assert seen[-1][2]["tools"] is None and seen[-1][2]["max_tokens"] == runner.CONCLUSION
+    assert seen[-1][1][-1]["role"] == "user"
+
+    state, _, _ = simulate("loop", {"reasoning": [loop, loop, RuntimeError("the server is gone")]})
+    assert state.answer == "I couldn't produce an answer."     # only when there is no last word to be had
+
+
+def test_effort_names():
+    assert runner.effort({"effort": "max"}) is runner.EFFORT["high"]
+    with pytest.raises(ValueError):
+        runner.effort({"effort": "ultra"})
+
+
+def test_vision_passes_labelled_observations(simulate, monkeypatch, tmp_path):
+    from lobes.lobe import perception
+    monkeypatch.setattr(perception, "ocr", lambda image: ["Total 42"])
+    state, seen, _ = simulate("Read the total", {
+        "perception": [{"description": "receipt", "text": "Total 42", "details": []}],
+        "reasoning": ["42"], "language": ["OK"]}, images=[tmp_path / "receipt.png"])
+    assert state.answer == "42"
+    assert [lobe for lobe, *_ in seen] == ["perception", "reasoning", "language"]
+    assert "lobe:perception" in seen[1][1][0]["content"] and "tool:ocr" in seen[1][1][0]["content"]
+
+
+def test_generation_limit_is_enforced_before_each_call(tmp_path, monkeypatch):
+    cfg = config.load()
+    ctx = runner.Ctx(cfg, "specialists", runner.Trace(tmp_path / "trace"), tmp_path)
+    state = runner.TaskState("t", "request", [])
+    state.usage["completion_tokens"] = ctx.effort["tokens"] - 7
+    monkeypatch.setattr(ctx.mm, "ensure", lambda name: None)
+    sent = []
+    monkeypatch.setattr(providers, "chat", lambda *args, **kw: (sent.append(kw), reply({}, 7))[1])
+    ctx.chat(state, "reasoning", [], max_tokens=9000)
+    assert sent[0]["max_tokens"] == 7
+    monkeypatch.setattr(ctx.mm, "ensure", lambda name: pytest.fail("exhausted request must not load"))
+    with pytest.raises(runner.BudgetExceeded):
+        ctx.chat(state, "language", [], max_tokens=100)
+    assert len(sent) == 1 and state.capped == "tokens"
+
+
+def test_timeout_does_not_start_a_second_generation(tmp_path, monkeypatch):
+    ctx = runner.Ctx(config.load(), "specialists", runner.Trace(tmp_path / "trace"), tmp_path)
+    monkeypatch.setattr(ctx.mm, "ensure", lambda name: None)
+    sent = []
+    def fail(*args, **kw):
+        sent.append(kw)
+        raise httpx.ReadTimeout("deadline")
+    monkeypatch.setattr(providers, "chat", fail)
+    state = runner.TaskState("t", "request", [])
+    with pytest.raises(runner.BudgetExceeded):
+        ctx.chat(state, "reasoning", [], thinking=1024)
+    assert len(sent) == 1 and state.capped == "seconds"
+
+
+def sse(text):
+    return [json.loads(line[6:]) for line in text.splitlines() if line.startswith("data: {")]
+
+
+@pytest.mark.parametrize("stream", [False, True])
+def test_api_exposes_uncertainty_separately_from_code(tmp_path, monkeypatch, stream):
+    from starlette.testclient import TestClient
+    from lobes import api
+    state = runner.TaskState("t", "write code", [])
+    state.answer = "def add(a, b):\n    return a + b"
+    state.uncertainties = ["Source has not been executed."]
+    monkeypatch.setattr(api, "run", lambda *a, **kw: state)
+    with TestClient(api.make_app(dict(config.load(), _root=tmp_path))) as client:
+        result = client.post("/v1/chat/completions", json={"messages": [{"role": "user", "content": "write code"}], "stream": stream})
+    if stream:
+        chunks = sse(result.text)
+        assert "".join(c["choices"][0]["delta"].get("content", "") for c in chunks if c["choices"]) == state.answer
+        assert chunks[-1]["lobes"]["uncertainties"] == state.uncertainties
+    else:
+        assert result.json()["choices"][0]["message"]["content"] == state.answer
+        assert result.json()["lobes"]["uncertainties"] == state.uncertainties
+
+
+def test_api_streams_two_replies_apart_and_a_stop_reason_after_them(tmp_path, monkeypatch):
+    from starlette.testclient import TestClient
+    from lobes import api
+    state = runner.TaskState("t", "write it", [])
+    state.answer = "The write_file call reached the token limit twice before its arguments were complete, so I stopped."
+    state.stopped = True
+
+    def run(*a, on_delta=None, **kw):
+        for kind, text in (("content", "I'll write it."), ("step", "\n[retry] a tool call was cut off at the token limit\n"),
+                           ("content", "Writing it.")):
+            on_delta(kind, text)
+        return state
+    monkeypatch.setattr(api, "run", run)
+    with TestClient(api.make_app(dict(config.load(), _root=tmp_path))) as client:
+        chunks = sse(client.post("/v1/chat/completions", json={"messages": [{"role": "user", "content": "write it"}], "stream": True}).text)
+    content = "".join(c["choices"][0]["delta"].get("content", "") for c in chunks if c["choices"])
+    assert content == "I'll write it.\n\nWriting it.\n\n" + state.answer
+
+
+@pytest.mark.parametrize("stream", [False, True])
+def test_api_passes_a_server_error_on_so_a_client_can_compact(tmp_path, monkeypatch, stream):
+    from starlette.testclient import TestClient
+    from lobes import api
+    full = httpx.Response(400, request=httpx.Request("POST", "http://test"),
+                          json={"error": {"message": "the request exceeds the available context size, try increasing it"}})
+
+    def run(*a, **kw):
+        raise httpx.HTTPStatusError("400", request=full.request, response=full)
+    monkeypatch.setattr(api, "run", run)
+    with TestClient(api.make_app(dict(config.load(), _root=tmp_path))) as client:
+        result = client.post("/v1/chat/completions", json={"messages": [{"role": "user", "content": "hi"}], "stream": stream})
+    error = sse(result.text)[-1]["error"] if stream else result.json()["error"]
+    assert result.status_code == (200 if stream else 400)
+    assert error["code"] == "context_length_exceeded" and "exceeds the available context size" in error["message"]
+    busy = httpx.Response(500, request=full.request, json={"error": {"message": "Context size has been exceeded."}})
+    assert api.failure(httpx.HTTPStatusError("500", request=full.request, response=busy)) == (
+        500, {"message": "Context size has been exceeded.", "type": "server_error", "code": None})
+
+
+def test_provider_stream_assembles_the_same_reply(monkeypatch):
+    import contextlib
+    lines = ['data: {"choices":[{"delta":{"reasoning_content":"think"}}]}',
+             'data: {"choices":[{"delta":{"content":"Let me run it."}}]}',
+             'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"c0","function":{"name":"bash","arguments":"{\\"com"}}]}}]}',
+             'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"mand\\": \\"ls\\"}"}}]},"finish_reason":"tool_calls"}]}',
+             'data: {"choices":[],"usage":{"completion_tokens":9},"timings":{"predicted_n":9}}', "data: [DONE]"]
+    sent = []
+
+    @contextlib.contextmanager
+    def stream(method, url, json, timeout):
+        sent.append(json)
+        yield httpx.Response(200, request=httpx.Request(method, url), content="\n".join(lines).encode())
+    monkeypatch.setattr(providers.httpx, "stream", stream)
+    got = []
+    r = providers.chat({"base_url": "http://test/v1"}, "m", [{"role": "user", "content": "ls"}],
+                       on_delta=lambda kind, text: got.append((kind, text)))
+    assert sent[0]["stream"] and got == [("reasoning", "think"), ("content", "Let me run it."),
+                                         ("tool_call", '{"com'), ("tool_call", 'mand": "ls"}')]
+    assert r.text == "Let me run it." and r.reasoning == "think" and r.finish == "tool_calls" and r.usage == {"completion_tokens": 9}
+    assert r.tool_calls == [{"id": "c0", "type": "function", "function": {"name": "bash", "arguments": '{"command": "ls"}'}}]
+
+
+def test_v1_streams_a_routed_expert_and_hands_client_tool_calls_back(tmp_path, monkeypatch):
+    """The client runs its own tools: the first request ends with the expert's call, the second carries the result,
+    reuses the route without asking the classifiers, and ships the reviewed answer as content."""
+    from starlette.testclient import TestClient
+    from lobes import api
+    from lobes.lobe import executive
+    monkeypatch.setattr(models.ModelManager, "validate", lambda self, names: {})
+    monkeypatch.setattr(models.ModelManager, "ensure", lambda self, name: None)
+    executive._seen.clear()
+    replies = {"brick-2-max": [says("hard")], "granite-1b": [reply({"topic": "math"})],
+               "nemotron-3-nano-4b": [calls(("bash", {"command": "python -c 'print(17*23)'"})), says("17 boxes hold 391 parts."),
+                                      says("391 parts.")],
+               "gemma4-e2b": [says("OK"), says("OK")]}
+    seen = []
+
+    def chat(provider, model, messages, on_delta=None, **kw):
+        seen.append((model, [dict(m) for m in messages], kw))
+        r = replies[model].pop(0)
+        if on_delta:
+            on_delta("reasoning", f"({model} thinks)")
+            if r.text:
+                on_delta("content", r.text)
+        return r
+    monkeypatch.setattr(providers, "chat", chat)
+    bash = {"type": "function", "function": {"name": "bash", "parameters": {"type": "object"}}}
+    ask = [{"role": "developer", "content": "You are a coding agent."},
+           {"role": "user", "content": "A box holds 23 parts. How many parts are in 17 boxes?"}]
+    # the replies follow the default relay, whatever relays the local lobes.yaml sets
+    with TestClient(api.make_app(dict(config.load(), _root=tmp_path, relays={}))) as client:
+        first = sse(client.post("/v1/chat/completions", json={"model": "lobes-v1", "stream": True, "tools": [bash],
+                                                              "messages": ask}).text)
+        call = next(c["choices"][0]["delta"]["tool_calls"] for c in first if c["choices"] and "tool_calls" in c["choices"][0]["delta"])
+        tool_turn = [{"role": "assistant", "content": "", "reasoning_content": "(relay notes)",
+                      "tool_calls": [{k: v for k, v in call[0].items() if k != "index"}]},
+                     {"role": "tool", "tool_call_id": call[0]["id"], "content": "391"}]
+        second = sse(client.post("/v1/chat/completions", json={"model": "lobes-v1", "stream": True, "tools": [bash],
+                                                               "messages": ask + tool_turn}).text)
+        compacted = [ask[0], {"role": "user", "content": "This is an automatically generated checkpoint: the user asked about boxes."}]
+        third = sse(client.post("/v1/chat/completions", json={"model": "lobes-v1", "stream": True, "tools": [bash],
+                                                              "messages": compacted + tool_turn}).text)
+    assert [c["choices"][0]["finish_reason"] for c in first if c["choices"] and c["choices"][0]["finish_reason"]] == ["tool_calls"]
+    assert not any(c["choices"][0]["delta"].get("content") for c in first if c["choices"])
+    assert [m for m, *_ in seen[:5]] == ["granite-1b", "brick-2-max", "nemotron-3-nano-4b", "nemotron-3-nano-4b", "gemma4-e2b"]
+    expert = seen[3][1]
+    assert expert[0] == {"role": "system", "content": "You are a coding agent."} and expert[-1]["content"] == "391"
+    assert "reasoning_content" not in expert[2] and seen[3][2]["tools"] == [bash]
+    assert "python -c" in seen[4][1][-1]["content"] and "391" in seen[4][1][-1]["content"]
+    thinking = "".join(c["choices"][0]["delta"].get("reasoning_content", "") for c in second if c["choices"])
+    content = "".join(c["choices"][0]["delta"].get("content", "") for c in second if c["choices"])
+    assert "[review]" in thinking and "17 boxes hold 391 parts." not in thinking and content == "17 boxes hold 391 parts."
+    assert second[-1]["lobes"]["topic"] == "math" and second[-1]["usage"]["completion_tokens"] == 20
+    assert second[-1]["usage"]["prompt_tokens"] == 20 and second[-1]["lobes"]["usage"]["prompt_tokens"] == 40
+    assert [m for m, *_ in seen[5:]] == ["nemotron-3-nano-4b", "gemma4-e2b"] and third[-1]["lobes"]["route"] == "hard"
+
+
+def test_api_stops_the_run_when_a_streaming_client_goes_away(tmp_path, monkeypatch):
+    import asyncio
+    import threading
+    from lobes import api
+    started, result = threading.Event(), {}
+
+    def run(cfg, goal, *, on_delta=None, cancel=None, **kw):
+        on_delta("reasoning", "thinking")
+        started.set()
+        result["cancelled"] = cancel.wait(5)
+        return runner.TaskState("t", goal, [])
+    monkeypatch.setattr(api, "run", run)
+    app = api.make_app(dict(config.load(), _root=tmp_path))
+    body = json.dumps({"stream": True, "messages": [{"role": "user", "content": "hi"}]}).encode()
+    inbox = [{"type": "http.request", "body": body, "more_body": False}]
+
+    async def receive():
+        if inbox:
+            return inbox.pop(0)
+        while not started.is_set():
+            await asyncio.sleep(0.01)
+        return {"type": "http.disconnect"}
+
+    async def send(message):
+        pass
+    scope = {"type": "http", "asgi": {"version": "3.0", "spec_version": "2.3"}, "http_version": "1.1", "method": "POST",
+             "scheme": "http", "path": "/v1/chat/completions", "raw_path": b"/v1/chat/completions", "root_path": "",
+             "query_string": b"", "headers": [(b"content-type", b"application/json")], "client": ("t", 1), "server": ("t", 80)}
+    asyncio.run(app(scope, receive, send))
+    assert result["cancelled"]
+
+
+def test_a_cancelled_request_stops_mid_stream_and_makes_no_more_calls(tmp_path, monkeypatch):
+    ctx = runner.Ctx(config.load(), "specialists", runner.Trace(tmp_path / "trace"), tmp_path)
+    monkeypatch.setattr(ctx.mm, "ensure", lambda name: None)
+    shown = []
+    state = runner.TaskState("t", "request", [], on_delta=lambda kind, text: shown.append(text))
+
+    def chat(provider, model, messages, on_delta=None, **kw):
+        on_delta("reasoning", "a")
+        on_delta("tool_call", '{"cmd": "echo')
+        state.cancel.set()
+        on_delta("tool_call", ' again')        # a reply that is all tool call arguments stops too
+        pytest.fail("the stream must stop")
+    monkeypatch.setattr(providers, "chat", chat)
+    with pytest.raises(runner.BudgetExceeded):
+        ctx.chat(state, "reasoning", [], thinking=1024)
+    assert shown == ["a"]
+    monkeypatch.setattr(providers, "chat", lambda *a, **kw: pytest.fail("no call after a cancel"))
+    with pytest.raises(runner.BudgetExceeded):
+        ctx.chat(state, "language", [])
+
+
+def test_cli_prints_code_verbatim(tmp_path, monkeypatch):
+    from typer.testing import CliRunner
+    from lobes import cli
+    state = runner.TaskState("t", "fix it", [])
+    state.answer = "def mid(xs):\n    return xs[len(xs) // 2]"
+    monkeypatch.setattr(runner, "run", lambda *a, **kw: state)
+    result = CliRunner().invoke(cli.app, ["ask", "fix it"])
+    assert result.exit_code == 0 and state.answer in result.output
+
+
+def test_eval_judge():
+    from lobes import eval as ev
+    assert ev.judge("gsm8k", {"gold": "18"}, "3 apples and 6 pears.\n18") == (True, False)
+    assert ev.judge("gsm8k", {"gold": "19"}, "3 apples and 6 pears.\n18") == (False, False)
+    assert ev.code_block("Sure:\n```python\ndef f():\n    pass\n```\nDone.") == "def f():\n    pass\n"
+    assert ev.code_block("    return 1\n") == "    return 1\n"
 
 
 class FakeRouter:
@@ -65,26 +701,14 @@ class FakeRouter:
         self.log = []
 
     def get(self, url, **kw):
-        return FakeResp({"data": [{"id": n, "status": {"value": s}} for n, s in self.state.items()]})
+        return httpx.Response(200, request=httpx.Request("GET", url),
+                              json={"data": [{"id": n, "status": {"value": s}} for n, s in self.state.items()]})
 
     def post(self, url, json, **kw):
         op = url.rsplit("/", 1)[1]
         self.state[json["model"]] = "loaded" if op == "load" else "unloaded"
         self.log.append((op, json["model"]))
-        return FakeResp({})
-
-
-class FakeResp:
-    status_code = 200
-
-    def __init__(self, j):
-        self._j = j
-
-    def json(self):
-        return self._j
-
-    def raise_for_status(self):
-        pass
+        return httpx.Response(200, request=httpx.Request("POST", url), json={})
 
 
 def test_budget_lru(monkeypatch):
@@ -108,344 +732,90 @@ def test_budget_lru(monkeypatch):
         models.ModelManager(cfg).ensure("c")
 
 
-def _reply(data, tokens=10):
-    return Reply(text=json.dumps(data), data=data, reasoning=None, usage={"total_tokens": tokens}, ms=1, timings={})
-
-
-def _run(tmp_path, monkeypatch, goal, answers, **cfg_over):
-    """runner.run with Ctx.chat replaced: answers[lobe] is a list of replies in call order (the last one repeats)
-    or a callable(messages). The executive says math unless the test says otherwise.
-    Returns (state, calls seen as lobe names, trace records, messages sent per lobe)."""
-    cfg = config.load()
-    cfg["_root"] = tmp_path
-    cfg.update(cfg_over)
-    answers = {"executive": [{"kind": "math", "needs_tool": True}], **answers}
-    seen, sent = [], {}
-
-    def fake_chat(self, state, lobe, messages, *, schema=None, thinking=None, temperature=0.2, max_tokens=2048, images=None):
-        seen.append(lobe)
-        sent.setdefault(lobe, []).append(messages)
-        a = answers[lobe]
-        if callable(a):
-            r = _reply(a(messages))
-        else:
-            i = min(len(sent[lobe]) - 1, len(a) - 1)
-            r = _reply(a[i]) if isinstance(a[i], dict) else a[i]
-        for k in ("total_tokens", "completion_tokens"):
-            state.usage[k] = state.usage.get(k, 0) + r.usage["total_tokens"]
-        state.calls.append((lobe, "fake/think" if thinking else "fake", 1, r.usage["total_tokens"]))
-        return r
-
-    monkeypatch.setattr(runner.Ctx, "chat", fake_chat)
-    state = runner.run(cfg, goal, profile="specialists", images=cfg_over.get("images"))
-    trace = [json.loads(l) for l in (tmp_path / "runs" / state.task_id / "trace.jsonl").read_text(encoding="utf-8").splitlines()]
-    return state, seen, trace, sent
-
-
-def _program(code):
-    return {"why": "compute", "call": {"name": "python", "args": {"code": code}}}
-
-
-def test_two_witnesses_agree(tmp_path, monkeypatch):
-    """math: the reasoning lobe's check and the motor lobe's program print the same value, nobody else runs"""
-    st, seen, trace, _ = _run(tmp_path, monkeypatch, "what is 17 * 23", {
-        "motor": [_program("print(17*23)")],
-        "reasoning": [{"values": ["391"], "program":"print(17 * 23)", "code": None}]})
-    assert st.task_class == "qa" and st.needs_tool and st.route == "lobes"
-    assert seen == ["executive", "reasoning", "motor"]       # a bare value is not sent to the language lobe
-    assert [(w.lobe, w.value, w.ran) for w in st.witnesses] == [("reasoning", "391", True), ("motor", "391", True)]
-    assert st.basis == "evidence" and st.verdicts[-1].verdict == "PASS" and st.answer == "391"
-    kinds = [t["kind"] for t in trace]
-    assert kinds[:3] == ["start", "intake", "tool"] and kinds.count("witness") == 2 and kinds[-2:] == ["verdict", "final"]
-    assert not st.observations                       # tool output is a witness's value, never shared
-
-
-def test_third_witness_breaks_a_tie(tmp_path, monkeypatch):
-    """the motor program is wrong; a hot sample of the reasoning lobe, blind, sides with its first"""
-    st, seen, _, sent = _run(tmp_path, monkeypatch, "what is 17 * 23", {
-        "motor": [_program("print(17*22)")],
-        "reasoning": [{"values": ["391"], "program":"print(17 * 23)", "code": None}]})
-    assert seen == ["executive", "reasoning", "motor", "reasoning"]
-    assert st.value == "391" and st.basis == "evidence" and "reasoning, reasoning agree" in st.verdicts[-1].notes
-    assert "374" not in json.dumps(sent["reasoning"])    # blind: no other witness's value in what it was sent
-
-
-def test_no_majority_is_hedged(tmp_path, monkeypatch):
-    """reasoning thinks, motor answers plain, two hot samples fill n; still nothing agrees"""
-    from lobes.lobe import language
-    n = iter(range(391, 400))
-    st, seen, _, _ = _run(tmp_path, monkeypatch, "what is 17 * 23", {
-        "motor": [_program("print(17*22)")],
-        "reasoning": lambda m: {"values": [str(next(n))], "program":None, "code": None}})
-    assert seen == ["executive", "reasoning", "motor", "reasoning", "reasoning"]
-    assert [m for lobe, m, *_ in st.calls if lobe != "executive"] == ["fake/think", "fake", "fake/think", "fake/think"]
-    assert st.verdicts[-1].verdict == "CONFLICT" and st.basis == "none"
-    assert st.answer == language.HEDGE + "391" and len(st.uncertainties) == 3
-
-
-def test_program_repair_and_restatement(tmp_path, monkeypatch):
-    """a program that dies gets one repair with its stderr; a check that just prints the answer is not evidence"""
-    st, seen, _, sent = _run(tmp_path, monkeypatch, "what is 17 * 23", {
-        "motor": [_program("print(17*23"), _program("print(17*23)")],
-        "reasoning": [{"values": ["391"], "program":"print(391)", "code": None}]})
-    assert seen == ["executive", "reasoning", "motor", "motor"] and st.retries == 1
-    assert "SyntaxError" in sent["motor"][1][-1]["content"]
-    assert [(w.ran, w.note) for w in st.witnesses] == [(False, "restated"), (True, "")]
-    assert st.basis == "evidence" and st.value == "391"
-
-
-def test_auto_climb(tmp_path, monkeypatch):
-    """auto: no two witnesses ever agree, so the effort climbs to high and xhigh, drawing more hot samples,
-    then gives up hedged"""
-    from lobes.lobe import language
-    n = iter(range(1000, 2000))
-    st, seen, trace, _ = _run(tmp_path, monkeypatch, "what is 17 * 23", {
-        "motor": [_program("print(17*22)")],
-        "reasoning": lambda m: {"values": [str(next(n))], "program":None, "code": None}}, effort="auto")
-    assert [t["level"] for t in trace if t["kind"] == "effort"] == ["high", "xhigh"] and st.effort == "xhigh"
-    assert len(st.witnesses) == 1 + runner.EFFORT["xhigh"]["n"] and seen.count("reasoning") == runner.EFFORT["xhigh"]["n"]
-    assert st.verdicts[-1].verdict == "CONFLICT" and st.answer == language.HEDGE + "1000"
-
-
-def test_token_cap(tmp_path, monkeypatch):
-    """the cap counts generated tokens; past it no hot sample is drawn"""
-    st, seen, _, _ = _run(tmp_path, monkeypatch, "what is 17 * 23", {
-        "motor": [_reply(_program("print(17*22)"), tokens=17000)],
-        "reasoning": [{"values": ["391"], "program":None, "code": None}]})
-    assert seen == ["executive", "reasoning", "motor"] and st.capped == "tokens"
-    assert "capped by tokens" in st.verdicts[-1].notes and st.answer.startswith("Not sure")
-
-
-def test_closed_book_unanimity(tmp_path, monkeypatch):
-    """closed-book qa: every sample of the level must agree; one dissenter means a hedge"""
-    from lobes.lobe import language
-    exe = {"kind": "qa", "needs_tool": False}
-    st, seen, _, _ = _run(tmp_path, monkeypatch, "who wrote it", {
-        "executive": [exe], "reasoning": [{"values": ["Alice"], "program":None, "code": None}], "language": [{"answer": "Alice"}]})
-    assert seen == ["executive", "reasoning", "reasoning", "reasoning", "language"]
-    assert st.basis == "consistency" and st.answer == "Alice"
-    k = iter(range(100))
-    st, seen, _, _ = _run(tmp_path, monkeypatch, "who wrote it", {
-        "executive": [exe], "reasoning": lambda m: {"values": ["Alice" if next(k) % 2 == 0 else "Bob"], "program":None, "code": None},
-        "language": [{"answer": "Alice"}]})
-    assert seen.count("reasoning") == 3 and st.basis == "none" and st.answer == language.HEDGE + "Alice"
-    assert runner.effort({"effort": "auto"}) is runner.EFFORT["medium"]
-    with pytest.raises(ValueError):
-        runner.effort({"effort": "ultra"})
-
-
-def test_vision_ocr_witness(tmp_path, monkeypatch):
-    """the perception lobe answers, the ocr engine read the same thing: settled without the reasoning lobe"""
-    from lobes.lobe import perception
-    monkeypatch.setattr(perception, "ocr", lambda path: ["Total", "42"])
-    img = tmp_path / "x.png"
-    img.write_bytes(b"")
-    st, seen, _, _ = _run(tmp_path, monkeypatch, "what is the total?", {
-        "perception": [{"description": "a receipt", "text": "Total 42", "details": []}, {"answer": "42"}]}, images=[img])
-    assert st.task_class == "vision" and seen == ["perception", "perception"]
-    assert [(w.lobe, w.ran) for w in st.witnesses] == [("perception", False), ("ocr", True)]
-    assert st.basis == "evidence" and st.answer == "42"
-    assert [o.source for o in st.observations] == ["lobe:perception", "tool:ocr"]
-
-
-def test_vision_perception_anchors(tmp_path, monkeypatch):
-    """the reasoning lobe reads the notes, not the image: its samples agreeing with each other or with the engine
-    settle nothing without the perception lobe, whose read then goes out hedged"""
-    from lobes.lobe import language, perception
-    monkeypatch.setattr(perception, "ocr", lambda path: ["will"])
-    img = tmp_path / "x.png"
-    img.write_bytes(b"")
-    st, seen, _, _ = _run(tmp_path, monkeypatch, "which word is underlined?", {
-        "perception": [{"description": "a page", "text": "we will", "details": []}, {"answer": "would"}],
-        "reasoning": [{"answer": "will"}], "language": [{"answer": "would"}]}, images=[img])
-    assert seen == ["perception", "perception", "reasoning", "reasoning", "reasoning", "language"]
-    assert [m for lobe, m, *_ in st.calls if lobe == "perception"] == ["fake", "fake/think"]   # it looks plain, answers thinking
-    assert [(w.lobe, w.value) for w in st.witnesses] == [("perception", "would")] + [("reasoning", "will"), ("ocr", "will")] * 3
-    assert st.verdicts[-1].verdict == "CONFLICT" and st.answer == language.HEDGE + "would"
-
-
-class FakeCtx:
-    """Enough of runner.Ctx for the verifier: every lobe is a model, chat replays canned replies."""
-    def __init__(self, tmp_path, replies, **cfg):
-        self.workdir, self.rundir, self.replies, self.cfg = tmp_path, tmp_path, iter(replies), cfg
-        self.effort = runner.effort(cfg)
-        self.trace = type("T", (), {"write": staticmethod(lambda *a, **k: None)})
-
-    def is_model(self, lobe):
-        return True
-
-    def chat(self, state, lobe, messages, **kw):
-        return _reply(next(self.replies))
-
-
-def _state(goal, task_class):
-    st = runner.TaskState("t", goal, [])
-    st.task_class = task_class
-    return st
-
-
-def test_verify_code(tmp_path):
-    goal = 'def dbl(x):\n    """\n    >>> dbl(2)\n    4\n    """'
-    v = verifier.verify_code(FakeCtx(tmp_path, []), _state(goal, "code"), "def dbl(x):\n    return 2 * x")
-    assert (v.verdict, v.basis) == ("PASS", "evidence")                       # the task's own examples, no model
-    v = verifier.verify_code(FakeCtx(tmp_path, []), _state(goal, "code"), "def dbl(x):\n    return x")
-    assert v.verdict == "RETRY" and "0/1" in v.notes
-    v = verifier.verify_code(FakeCtx(tmp_path, []), _state("write add(a, b)", "code"), "def add(a, b):\n    return a + b")
-    assert (v.verdict, v.basis) == ("PASS", "none") and "no examples" in v.notes   # nothing to run, no model asked
-    v = verifier.verify_code(FakeCtx(tmp_path, []), _state("regex for a date", "code"), r"\d{4}-\d{2}-\d{2}")
-    assert (v.verdict, v.basis) == ("PASS", "none")
-
-
-def test_code_in_values_is_code(tmp_path, monkeypatch):
-    """the executive said code and the reasoning lobe wrote the source as its value: the code path, not a vote"""
-    goal = 'def dbl(x):\n    """\n    >>> dbl(2)\n    4\n    """\n'
-    st, seen, _, _ = _run(tmp_path, monkeypatch, goal, {
-        "executive": [{"kind": "code", "needs_tool": False}],
-        "reasoning": [{"values": ["def dbl(x):\n    return 2 * x"], "program": None, "code": None}]})
-    assert st.task_class == "code" and seen == ["executive", "reasoning"] and st.basis == "evidence"
-    assert st.answer == "def dbl(x):\n    return 2 * x"
-
-
-def test_code_retry_carries_the_failure(tmp_path, monkeypatch):
-    goal = 'implement this\n\ndef dbl(x):\n    """\n    >>> dbl(2)\n    4\n    """\n'
-    st, seen, _, sent = _run(tmp_path, monkeypatch, goal, {"executive": [{"kind": "code", "needs_tool": True}],
-        "reasoning": [{"values": [], "program":None, "code": "def dbl(x):\n    return x"}, {"answer": "def dbl(x):\n    return 2 * x"}]},
-        effort="low")
-    assert st.task_class == "code" and seen == ["executive", "reasoning", "reasoning"] and st.retries == 1
-    assert "rejected" in sent["reasoning"][1][-1]["content"] and "0/1" in sent["reasoning"][1][-1]["content"]
-    assert st.basis == "evidence" and st.answer == "def dbl(x):\n    return 2 * x"
-
-
-def test_seed_per_call(tmp_path, monkeypatch):
-    """the eval fixes the seed; until the call index was folded in, every hot sample came back identical"""
-    seeds = []
-    monkeypatch.setattr(runner.providers, "chat",
-                        lambda p, m, msgs, **kw: (seeds.append(kw["seed"]), Reply("{}", {}, None, {}, 1, {}))[1])
-    monkeypatch.setattr(runner.ModelManager, "ensure", lambda self, name: None)
-    cfg = config.load()
-    cfg["_root"], cfg["seed"] = tmp_path, 7
-    ctx = runner.Ctx(cfg, "specialists", runner.Trace(tmp_path / "trace.jsonl"), tmp_path)
-    st = _state("who wrote it", "qa")
-    for _ in range(3):
-        ctx.chat(st, "reasoning", [])
-    assert seeds == [7, 8, 9]
-
-
 def test_raw_condition(monkeypatch):
     """R is the model alone: one call, the judge reads the free text, humaneval takes the fenced block"""
     from lobes import eval as ev
     sent = []
-    reply = {"text": "3 apples and 6 pears.\n18"}
-    monkeypatch.setattr(ev.providers, "chat",
-                        lambda p, m, msgs, **kw: (sent.append((msgs, kw)), Reply(reply["text"], None, None, {"total_tokens": 5}, 1, {}))[1])
+    text = {"reply": "3 apples and 6 pears.\n18"}
+    monkeypatch.setattr(providers, "chat", lambda p, m, msgs, **kw:
+                        (sent.append((msgs, kw)), Reply(text["reply"], None, None, {"total_tokens": 5}, 1, {}))[1])
     monkeypatch.setattr(models.ModelManager, "ensure", lambda self, name: None)
     cfg = dict(config.load(), seed=4)
     vram = type("V", (), {"peak": 0})()
     rec = ev.run_item(cfg, "R", 4, "gsm8k", {"id": "g1", "prompt": "how many", "gold": "18"}, vram)
-    assert rec["correct"] and rec["calls"] == 1 and rec["swaps"] == 0 and "level" not in rec
+    assert rec["correct"] and rec["calls"] == 1 and rec["swaps"] == 0
     assert sent[0][0][0]["content"].endswith(ev.RAW_TAIL) and sent[0][1]["seed"] == 4
-    reply["text"] = "Sure:\n```python\ndef add(a, b):\n    return a + b\n```\nthat is all"
+    text["reply"] = "Sure:\n```python\ndef add(a, b):\n    return a + b\n```\nthat is all"
     he = {"id": "h1", "prompt": "add", "entry_point": "add", "source": "def add(a, b):\n", "test": "def check(c):\n    assert c(1, 2) == 3\n"}
     assert ev.run_item(cfg, "R", 4, "humaneval", he, vram)["correct"]
 
 
 def test_eval_record(tmp_path, monkeypatch):
     from lobes import eval as ev
-    cfg = config.load()
-    cfg["_root"] = tmp_path
-    replies = {"executive": {"kind": "math", "needs_tool": True}, "motor": _program("print(17*22)"),
-               "reasoning": {"values": ["391"], "program":"print(17*23)", "code": None}, "language": {"answer": "391"}}
-    monkeypatch.setattr(runner.Ctx, "chat", lambda self, state, lobe, messages, **kw: _reply(replies[lobe]))
+    source = "Here it is:\n```python\ndef add(a, b):\n    return a + b\n```"
+    replies = {"executive": [says("hard")] * 2,
+               "reasoning": [calls(("python", {"code": "print(17 * 23)"})), says("391"), says(source)],
+               "language": [says("OK"), says("OK")]}
+    monkeypatch.setattr(models.ModelManager, "validate", lambda self, names: {})
+    monkeypatch.setattr(runner.Ctx, "chat", lambda self, state, lobe, messages, **kw: replies[lobe].pop(0))
     vram = type("V", (), {"peak": 0})()
+    cfg = dict(config.load(), _root=tmp_path)
     rec = ev.run_item(cfg, "D", 0, "tools", {"id": "t1", "prompt": "what is 17 * 23", "answer": "391"}, vram)
-    assert rec["correct"] and rec["basis"] == "evidence" and rec["passed"] and not rec["stuck"] and rec["capped"] is None
-    assert [w[0] for w in rec["witnesses"]] == ["reasoning", "motor", "reasoning"] and rec["agreed"] == 2 and rec["disagree"]
+    assert rec["correct"] and rec["route"] == "hard" and rec["tools"] == 1 and rec["sent_back"] == 0
+    assert rec["capped"] is None and "error" not in rec
+    he = {"id": "h1", "prompt": "add", "entry_point": "add", "source": "def add(a, b):\n", "test": "def check(c):\n    assert c(1, 2) == 3\n"}
+    assert ev.run_item(cfg, "D", 0, "humaneval", he, vram)["correct"]
 
 
-def test_forced_answer(monkeypatch):
-    """thinking that eats the whole cap gets a second, prefilled call that closes the think block and answers"""
-    from lobes import providers
-    bodies = []
-    replies = [{"choices": [{"message": {"content": "", "reasoning_content": "so far 23*40=920"}, "finish_reason": "length"}],
-                "usage": {"prompt_tokens": 10, "completion_tokens": 100, "total_tokens": 110}},
-               {"choices": [{"message": {"content": '"answer": "1081"}'}, "finish_reason": "stop"}],
-                "usage": {"prompt_tokens": 120, "completion_tokens": 8, "total_tokens": 128}}]
-
-    class Resp:
-        def __init__(self, j): self.j = j
-        def raise_for_status(self): pass
-        def json(self): return self.j
-    import copy
-    monkeypatch.setattr(providers.httpx, "post",
-                        lambda url, json, timeout: (bodies.append(copy.deepcopy(json)), Resp(replies[len(bodies) - 1]))[1])
-    r = providers.chat({"base_url": "http://x"}, "m", [{"role": "user", "content": "q"}], schema={"type": "object"}, thinking=True, max_tokens=100)
-    assert r.forced and r.data == {"answer": "1081"} and r.usage["total_tokens"] == 238 and r.reasoning == "so far 23*40=920"
-    last = bodies[1]["messages"][-1]
-    assert last["role"] == "assistant" and last["reasoning_content"].endswith(providers.BUDGET_MSG) and last["content"] == "{"
-    assert bodies[1]["max_tokens"] == 2500 and bodies[0]["max_tokens"] == 100
+def test_ids_select_items_past_the_default_slice(monkeypatch):
+    from lobes import eval as ev
+    monkeypatch.setattr(ev, "load_suite", lambda suite: [{"id": f"{suite}-{i}"} for i in range(300)])
+    for seed, quick in ((0, False), (1, False), (0, True)):
+        assert dict(ev.plan("D", seed, quick, ["gsm8k"], {"gsm8k-250"}))["gsm8k"] == [{"id": "gsm8k-250"}]
 
 
-def test_refused_think_answers_plain(tmp_path, monkeypatch):
-    """a thinking call the server refuses goes out again plain; a plain one refused is an error"""
-    import httpx
-    cfg = config.load()
-    cfg["_root"] = tmp_path
-    cfg["providers"]["fake"], cfg["models"]["m"] = {"base_url": "http://x"}, {"thinking": True}
-    monkeypatch.setattr(runner, "ModelManager", lambda cfg: None)
-    monkeypatch.setattr(runner.Ctx, "slot", lambda self, lobe: ("fake", "m"))
-    asked = []
-
-    def fake(provider, model, messages, *, thinking=None, max_tokens=2048, **kw):
-        asked.append((thinking, max_tokens))
-        if thinking:
-            raise httpx.HTTPStatusError("500", request=None, response=httpx.Response(500))
-        return _reply({"answer": "4"})
-    monkeypatch.setattr(runner.providers, "chat", fake)
-    ctx = runner.Ctx(cfg, "specialists", runner.Trace(tmp_path / "t.jsonl"), tmp_path)
-    st = runner.TaskState("t", "2+2", [])
-    r = ctx.chat(st, "perception", [{"role": "user", "content": "2+2"}], thinking=True, max_tokens=6000)
-    assert r.data == {"answer": "4"} and asked == [(True, 6000), (False, 2500)] and st.calls == [("perception", "fake/m", 1, 10)]
-    assert [json.loads(l)["kind"] for l in (tmp_path / "t.jsonl").read_text().splitlines()] == ["refused", "call"]
-    monkeypatch.setattr(runner.providers, "chat", lambda *a, **k: (_ for _ in ()).throw(httpx.HTTPStatusError("500", request=None, response=httpx.Response(500))))
-    with pytest.raises(httpx.HTTPStatusError):
-        ctx.chat(st, "perception", [{"role": "user", "content": "2+2"}], thinking=False)
-
-
-def test_hedge(tmp_path):
-    from lobes.lobe import language
-    ctx = FakeCtx(tmp_path, [])
-    ctx.is_model = lambda lobe: False
-    st = _state("who wrote it", "qa")
-    st.value = "Alice"
-    assert language.say(ctx, st).answer == language.HEDGE + "Alice"
-    st.value = None
-    assert language.say(ctx, st).answer == "Not sure."       # no witness gave a value: still say so, not an empty reply
-    st.value = "def f(x):\n    return x"
-    assert language.say(ctx, st).answer == st.value          # a hedge in front of code would not run
-    st.value, st.basis = "Alice", "consistency"
-    assert language.say(ctx, st).answer == "Alice"
+def test_api_moves_a_harness_context_snapshot_out_of_the_request(tmp_path):
+    from lobes.api import _messages
+    from lobes.lobe import reasoning
+    from lobes.runner import TaskState
+    sent = [{"role": "developer", "content": "You are a coding agent."}, {"role": "user", "content": "hi"},
+            {"role": "user", "content": [{"type": "text", "text": "Current runtime context. Approval policy: ask."}]}]
+    out, goal, _ = _messages(sent, tmp_path)
+    assert goal == "hi" and out == [{"role": "system", "content": "You are a coding agent.\n\nCurrent runtime context. Approval policy: ask."},
+                                    {"role": "user", "content": "hi"}]
+    call = [{"id": "c1", "type": "function", "function": {"name": "read", "arguments": "{}"}}]
+    working = sent + [{"role": "assistant", "content": "", "tool_calls": call}, {"role": "tool", "tool_call_id": "c1", "content": "x"},
+                      {"role": "user", "content": 'The approval policy changed from "ask" to "never" (changed by the user).'},
+                      {"role": "user", "content": "Current runtime context. Approval policy: never."}]
+    out, goal, _ = _messages(working, tmp_path)
+    assert goal == "hi" and out[0]["content"].endswith("Approval policy: never.")
+    from lobes.runner import request_at, ran_in_turn
+    assert ran_in_turn(out) == [("read", {}, "x")]
+    later = out + [{"role": "assistant", "content": "done"}, {"role": "user", "content": "now the tests"}]
+    assert later[request_at(later)]["content"] == "now the tests"
+    repeat = out + [{"role": "user", "content": "You are repeating the exact same tool call with identical arguments."}]
+    assert request_at(repeat) == 1
+    for notice in ("Another language model started to solve this problem and produced a summary.", "<environment_context>\n  <cwd>E:\\</cwd>",
+                   "<turn_aborted>\nThe user interrupted the previous turn.", "# AGENTS.md instructions for E:\\"):
+        assert request_at(out + [{"role": "user", "content": notice}]) == 1
+    stopped = out + [{"role": "user", "content": "write a .bat instead"}]        # the tool step never got its reply
+    assert request_at(stopped) == len(out) and request_at(stopped[:len(out)]) == 1
+    compacted = [out[0], {"role": "user", "content": "This is an automatically generated checkpoint."}] + out[2:4]
+    assert request_at(compacted) == 1
+    state = TaskState("t", "今天是星期几", [])
+    state.now = "2026-09-16 Wednesday 22:07"
+    assert reasoning.brief(state).endswith("(Local time: 2026-09-16 Wednesday 22:07)")
 
 
-def test_language_guard():
-    from lobes.lobe.language import faithful
-    assert faithful("17 x 23 = 391", "391", "what is 17 * 23") and not faithful("}54", "54", "how many")
-    assert not faithful("97404784", "97405784", "what is 123456 * 789 minus 1000")
-    assert not faithful("The beanstalk was 10 inches tall after 3 weeks.", "10 inches", "how tall after 3 weeks")
-    assert faithful("After 3 weeks the beanstalk was 10 inches tall.", "10 inches", "how tall after 3 weeks")
-    assert faithful("The capital of Australia is Canberra.", "Canberra", "capital of australia?")
-    assert not faithful("The capital is Sydney.", "Canberra", "capital of australia?")
-    assert faithful("Sum 27660, count 110.", "27660\n110", "sum and count") and not faithful("27660", "27660\n110", "sum and count")
-    assert faithful("Monday and Tuesday", "Monday\nTuesday", "which days") and not faithful("Tuesday", "Monday\nTuesday", "which days")
-
-
-def test_fast_route(tmp_path, monkeypatch):
-    cfg = config.load()
-    cfg["_root"] = tmp_path
-    monkeypatch.setattr(runner.Ctx, "chat", lambda self, state, lobe, messages, **kw:
-                        _reply({"kind": "chat", "needs_tool": False}) if kw.get("schema") else
-                        Reply(text="hi there", data=None, reasoning=None, usage={}, ms=1, timings={}))
-    state = runner.run(cfg, "hello", profile="specialists")
-    assert state.route == "fast" and state.answer == "hi there" and state.steps == 0 and not state.verdicts
+def test_a_tool_step_keeps_its_turns_route_and_send_backs(tmp_path):
+    from lobes.lobe import executive
+    ctx = runner.Ctx(dict(config.load(), _root=tmp_path), "v1", None, tmp_path)
+    made = runner.TaskState("t", "x", [], route="hard", topic="math", now="then", problems=["wrong"])
+    made.tool_calls = [{"id": "k1"}]
+    executive.remember(ctx, made)
+    step = runner.TaskState("t", "x", [], continues=True, step="k1")
+    executive.intake(ctx, step)
+    assert (step.route, step.topic, step.now, step.problems) == ("hard", "math", "then", ["wrong"])
 
 
 def test_jsonl_line_separator(tmp_path):

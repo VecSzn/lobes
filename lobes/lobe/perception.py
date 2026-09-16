@@ -9,7 +9,6 @@ SCHEMA = {"type": "object", "additionalProperties": False, "required": ["descrip
           "properties": {"description": {"type": "string"},
                          "text": {"type": "string", "description": "every piece of readable text, verbatim"},
                          "details": {"type": "array", "items": {"type": "string"}}}}
-ANSWER = {"type": "object", "additionalProperties": False, "required": ["answer"], "properties": {"answer": {"type": "string"}}}
 _engine = None
 
 
@@ -26,9 +25,10 @@ def ocr(path):
 
 
 def look(ctx, state, images=None):
+    from .executive import ends
     images = images or state.images
     prompt = ("Describe this image for someone who cannot see it, copy out all readable text exactly, and list "
-              f"details that matter for this task: {state.goal}")
+              f"details that matter for this task: {ends(state.goal)}")
     r = ctx.chat(state, "perception", [{"role": "user", "content": prompt}], schema=SCHEMA,
                  images=images, thinking=False, max_tokens=1000)
     d = r.data or {"description": r.text, "text": "", "details": []}
@@ -41,24 +41,10 @@ def look(ctx, state, images=None):
         lines = ocr(img)
         if lines is None:
             break
-        # registered like a tool run so claims can cite it and the verifier can match answers against it
+        # Keep the OCR reading separate from the model's description.
         ref = f"ocr_{sum(o.source == 'tool:ocr' for o in state.observations)}"
         text = "\n".join(lines)
         state.tool_results[ref] = {"stdout": text, "exit": 0}
         state.observations.append(Observation(source="tool:ocr", ref=ref, summary=("Text the ocr engine read, top to bottom:\n" + text) if text else "(the ocr engine found no text)"))
         ctx.trace.write("tool", ref=ref, call={"name": "ocr", "args": {"image": str(img)}}, exit=0, summary=text[:500])
     return d
-
-
-def ask(ctx, state):
-    """The perception witness: answers the question from the image directly, thinking as the effort says (the 2B
-    on the 5090: 34 of 45 right thinking, 31 plain, same images). Not written to the observations, so the
-    reasoning witness reads the description and the ocr lines without knowing this answer."""
-    from . import Witness, budget
-    think = ctx.effort["think"]
-    msgs = [{"role": "user", "content": f"Look at the image and answer with only the answer, nothing else: {state.goal}"}]
-    r = ctx.chat(state, "perception", msgs, schema=ANSWER, images=state.images, thinking=think,
-                 max_tokens=budget(ctx) if think else 300)
-    if r.data is None and think:
-        r = ctx.chat(state, "perception", msgs, schema=ANSWER, images=state.images, thinking=False, max_tokens=300)
-    return Witness("perception", (r.data or {}).get("answer", r.text).strip() or None)

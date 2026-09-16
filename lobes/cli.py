@@ -1,15 +1,14 @@
-import json
 import subprocess
 import sys
 from pathlib import Path
 
 import typer
 from rich import print as rprint
+from rich.markup import escape
 from rich.table import Table
 
 from . import config, install, providers
 from .models import ModelManager
-from .schema import Envelope, json_schema
 
 app = typer.Typer(add_completion=False, no_args_is_help=True)
 prov_app = typer.Typer(no_args_is_help=True)
@@ -38,9 +37,7 @@ def _server_cmd(cfg):
     cmd = [str(exe)]
     if exe.stem == "llama":            # newer releases ship one binary with subcommands
         cmd.append("serve")
-    ini = root / "models" / "models.ini"
-    if not ini.exists():
-        raise typer.BadParameter("models/models.ini missing, run `lobes install`")
+    ini = install.write_presets(cfg, root)
     return cmd + ["--models-preset", str(ini), "--models-max", "8",
                   "--host", cfg["llama"]["host"], "--port", str(cfg["llama"]["port"])]
 
@@ -87,10 +84,9 @@ def unload(name: str):
 def ask(prompt: str,
         lobe: str = typer.Option(None, help="talk to one lobe directly instead of running the full loop"),
         profile: str = None,
-        schema: bool = typer.Option(False, help="constrain the reply to the Envelope schema"),
         think: bool = typer.Option(None, "--think/--no-think"),
         image: list[Path] = typer.Option(None),
-        effort: str = typer.Option(None, help="low, medium, high, xhigh, max or auto; default is effort in lobes.yaml"),
+        effort: str = typer.Option(None, help="low, medium or high; bounded calls, no automatic escalation"),
         max_tokens: int = 2048):
     cfg = config.load()
     if effort:
@@ -98,7 +94,9 @@ def ask(prompt: str,
     if lobe is None:
         from .runner import run
         state = run(cfg, prompt, profile=profile, images=image)
-        rprint(state.answer)
+        print(state.answer)           # model text is not rich markup: [n // 2] would vanish
+        for uncertainty in state.uncertainties:
+            print(f"Note: {uncertainty}", file=sys.stderr)
         rprint(f"[dim]{state.summary()}[/dim]")
         return
     prov, model = config.lobe(cfg, lobe, profile)
@@ -106,18 +104,12 @@ def ask(prompt: str,
         raise typer.BadParameter(f"{lobe} is '{model}' in this profile, not a model")
     if prov == "local":
         ModelManager(cfg).ensure(model)
-    r = providers.chat(cfg["providers"][prov], model, [{"role": "user", "content": prompt}],
-                       schema=json_schema(Envelope) if schema else None, images=image,
+    r = providers.chat(cfg["providers"][prov], model, [{"role": "user", "content": prompt}], images=image,
                        thinking=think if cfg["models"].get(model, {}).get("thinking") else None,
                        max_tokens=max_tokens)
     if r.reasoning:
-        rprint(f"[dim]{r.reasoning}[/dim]")
-    if r.data is not None:
-        print(json.dumps(r.data, indent=2, ensure_ascii=False))
-        Envelope.model_validate(r.data)
-        rprint("[green]envelope ok[/green]")
-    else:
-        print(r.text)
+        rprint(f"[dim]{escape(r.reasoning)}[/dim]")
+    print(r.text)
     rprint(f"[dim]{r.ms} ms, usage={r.usage}[/dim]")
 
 
@@ -125,7 +117,8 @@ def ask(prompt: str,
 def eval_(conditions: str = "R,A,B,B3,C,D", seeds: str = "0,1,2", suites: str = None,
           quick: bool = typer.Option(False, help="3 items per suite, for timing"),
           tag: str = typer.Option("", help="subdirectory of eval/results, one per code version or machine"),
-          effort: str = typer.Option(None, help="low, medium, high, xhigh, max or auto, for every condition; default is effort in lobes.yaml"),
+          effort: str = typer.Option(None, help="low, medium or high, for every condition; default is effort in lobes.yaml"),
+          ids: str = typer.Option(None, help="comma-separated item ids; only these run"),
           workers: int = typer.Option(1, help="items run at once; more than 1 only where every model stays loaded"),
           report: bool = typer.Option(False, help="print the tables from eval/results instead of running")):
     from . import eval as eval_
@@ -136,7 +129,7 @@ def eval_(conditions: str = "R,A,B,B3,C,D", seeds: str = "0,1,2", suites: str = 
     if effort:
         cfg["effort"] = effort
     eval_.main(cfg, conditions.split(","), [int(x) for x in seeds.split(",")], quick,
-               suites.split(",") if suites else None, tag, workers)
+               suites.split(",") if suites else None, tag, workers, set(ids.split(",")) if ids else None)
 
 
 @app.command()

@@ -7,14 +7,17 @@ llama:
   port: 8080
   ctx: 16384
   # threads: 8              # llama-server starts one thread per core it sees; set this on a box with a cpu quota
-  vram_budget_mb: 6400       # 8188 total minus what the desktop already holds; recalibrate from `lobes models`
+  parallel: 1                # requests per model at once. llama-server's 4 slots share one context, so two long
+                             # conversations at once both failed; one slot queues the second. An eval box sets 4.
+  vram_budget_mb: 6800       # 8188 total minus what the desktop already holds; recalibrate from `lobes models`.
+                             # qwen3.5-4b at 131k and gemma4-e2b together peaked at 7578 of 8188 with the desktop
 
 # name -> where to get it, how much GPU memory it takes, where it runs.
 # vram_mb = nvidia-smi delta measured 2026-09-14 after loading with ctx 16384, 4 slots, and one 512-token generation
 models:
-  granite-1b:                # classifier only; Q8 because the 1B on the CPU costs no VRAM either way
-    repo: ibm-granite/granite-4.0-h-1b-GGUF
-    file: granite-4.0-h-1b-Q8_0.gguf
+  brick-2-max:               # easy/medium/hard classifier on Qwen3.5-0.8B; CC BY-NC 4.0, English only
+    repo: regolo/brick-complexity-2-max-Q8_0-GGUF
+    file: brick-complexity-2-max-Q8_0.gguf
     device: cpu
     resident: true
     vram_mb: 0
@@ -27,7 +30,11 @@ models:
   qwen3.5-4b:
     repo: unsloth/Qwen3.5-4B-GGUF
     file: Qwen3.5-4B-Q4_K_M.gguf
-    vram_mb: 3400
+    vram_mb: 3750            # nvidia-smi delta 2026-09-19 at ctx 65536; was 4638 at 131072
+    ctx: 65536               # Codex sends ~18k tokens of prompt and tools before any work. At 131072 the cache
+                             # left no room for the tool hand and every handoff swapped a model out, 9 a request
+    kv: q4_0                 # 1.1 GB of cache at 131072; found 3 of 3 planted facts in a 99k prompt
+    preset: {spec-type: ngram-map-k}   # drafts from the context: a copied file ran 280 -> 1034 tok/s on the pod 5090
     thinking: true
   qwen3.5-4b-vl:
     repo: unsloth/Qwen3.5-4B-GGUF
@@ -38,11 +45,26 @@ models:
   granite-h-micro:
     repo: ibm-granite/granite-4.0-h-micro-GGUF
     file: granite-4.0-h-micro-Q4_K_M.gguf
-    vram_mb: 2400
+    vram_mb: 2300            # nvidia-smi delta 2026-09-19, alone at the default ctx
   gemma4-e2b:
     repo: unsloth/gemma-4-E2B-it-GGUF
     file: gemma-4-E2B-it-Q4_K_M.gguf
-    vram_mb: 1700
+    ctx: 32768
+    vram_mb: 1900            # nvidia-smi delta 2026-09-19, alone; 1800 at ctx 16384
+    tools: false             # llama.cpp gets its calls as plain text (DECISIONS 09-17), so it is given none
+  granite-1b:                # v1 topic router; 330 of 341 on the 09-14 routing set, 0.85 s a call on the CPU
+    repo: ibm-granite/granite-4.0-h-1b-GGUF
+    file: granite-4.0-h-1b-Q8_0.gguf
+    device: cpu
+    resident: true
+    vram_mb: 0
+  nemotron-3-nano-4b:        # v1 math expert; NVIDIA open model license, English
+    repo: lmstudio-community/NVIDIA-Nemotron-3-Nano-4B-GGUF
+    file: NVIDIA-Nemotron-3-Nano-4B-Q4_K_M.gguf
+    ctx: 131072              # at 32768 a 38k-token Codex prompt ran out of room; 4 of its 42 layers hold a kv cache
+    kv: q8_0                 # found 3 of 3 planted facts in a 106k prompt
+    vram_mb: 4550            # nvidia-smi peak delta 2026-09-17 during that prompt, alone; 3550 at ctx 32768 f16
+    thinking: true
   qwen3.5-9b:
     repo: unsloth/Qwen3.5-9B-GGUF
     file: Qwen3.5-9B-IQ4_XS.gguf
@@ -53,28 +75,48 @@ providers:
   local:    { type: openai, base_url: http://127.0.0.1:8080/v1 }
   lmstudio: { type: openai, base_url: http://127.0.0.1:1234/v1 }
 
-# low | medium | high | xhigh | max | auto: thinking, witnesses, repairs and the per-item caps scale together
-# (EFFORT in runner.py). auto starts at medium and climbs to high, then xhigh, each time the witnesses run out.
-# xhigh and max think past 16k tokens, so raise ctx first.
+# low | medium | high: the same relay at every level; the level sets how long reasoning may think per call
+# (1024, 4096, 8192 tokens) and the request's caps (lobes/runner.py EFFORT).
 effort: medium
 
-# a lobe is filled with "provider/model", or a non-LLM implementation name. The verifier lobe is code
-# (lobes/lobe/verifier.py: the task's own examples, text matching) and has no slot.
+# a lobe is filled with "provider/model", or a non-LLM implementation name.
 profile: specialists
 profiles:
   specialists:                      # one family per lobe where it doesn't hurt; swapping is the normal case
-    executive:  local/granite-1b      # LFM2.5-1.2B could not classify (157/341 at best), see DECISIONS
+    executive:  local/brick-2-max     # granite-1b called most hard requests simple, see DECISIONS
     perception: local/qwen3.5-2b
     reasoning:  local/qwen3.5-4b
     motor:      local/granite-h-micro
     language:   local/gemma4-e2b
   shared:                           # same weights, different prompts; nothing swaps
-    executive:  local/granite-1b
+    executive:  local/brick-2-max
     perception: local/qwen3.5-4b-vl
     reasoning:  local/qwen3.5-4b-vl
     motor:      local/qwen3.5-4b-vl
     language:   passthrough
+  v1:                               # lobes-v1: a router picks one expert per request, the expert holds the tools, gemma reviews
+    executive:  local/brick-2-max     # simple or hard
+    router:     local/granite-1b      # which expert
+    perception: local/qwen3.5-2b
+    reasoning:  local/qwen3.5-4b      # when the router's reply does not parse; greetings land here too
+    code:       local/qwen3.5-4b
+    math:       local/nemotron-3-nano-4b
+    knowledge:  local/qwen3.5-4b
+    motor:      none
+    language:   local/gemma4-e2b
   # eval controls: one model in every slot, same scaffolding. "none" = slot empty (no vision)
+  bare-9b:                          # eval baseline T: the 9B thinks and holds every tool itself; no classifier, tool hand or review
+    executive:  none
+    perception: none
+    reasoning:  local/qwen3.5-9b
+    motor:      none
+    language:   passthrough
+  bare-4b:                          # the relay's own solver with every tool and no other lobe: what the division of labour is worth
+    executive:  none
+    perception: none
+    reasoning:  local/qwen3.5-4b
+    motor:      none
+    language:   passthrough
   single-9b:                        # the 9B alone is also the eval baseline R: one call, no lobes
     executive:  local/qwen3.5-9b
     perception: none
