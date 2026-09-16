@@ -1,7 +1,7 @@
 [project]
 name = "lobes"
 version = "0.0.1"
-description = "Six small models with one job each, on an 8 GB GPU. An answer counts when two of them reach it separately."
+description = "An experimental local AI runtime built from small specialist models and a deterministic verifier."
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
