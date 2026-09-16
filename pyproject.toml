@@ -1,7 +1,7 @@
 [project]
 name = "lobes"
 version = "0.0.1"
-description = "An experimental modular AI runtime that coordinates specialized small-model lobes with evidence-based verification and dynamic model swapping, built to fit in 8 GB of VRAM."
+description = "Six small models with one job each, on an 8 GB GPU. An answer counts when two of them reach it separately."
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }

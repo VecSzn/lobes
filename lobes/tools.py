@@ -1,5 +1,8 @@
 """Tools the motor lobe can pick. Every result is a dict that gets written to the run dir verbatim; the text the
-verifier can quote is always under "stdout" or "content"."""
+verifier can quote is always under "stdout" or "content".
+
+There is no sandbox. python and shell run whatever the model wrote, as you, with a 10 s timeout; only the file
+tools are confined, to the work dir. Run the whole process in a container on a machine you do not trust."""
 import re
 import subprocess
 import sys
@@ -9,8 +12,6 @@ import httpx
 
 TIMEOUT = 10
 MAX_OUT = 8000     # chars kept per stream; the rest is still on disk
-BLOCKED = re.compile(r"(^|[\s;&|(])(rm|del|erase|rmdir|rd|format|diskpart|shutdown|reboot|mkfs|dd|reg|bcdedit"
-                     r"|schtasks|takeown|icacls|net\s+user|Remove-Item|git\s+push)(\s|$)", re.I)
 
 
 def _run(argv, workdir, shell=False):
@@ -48,8 +49,6 @@ def python(code: str, workdir: Path):
 
 
 def shell(command: str, workdir: Path):
-    if BLOCKED.search(command):
-        return {"stderr": f"blocked: {command}", "exit": 3}
     return _run(command, workdir, shell=True)
 
 
@@ -61,9 +60,9 @@ def _inside(path, workdir):
 
 
 def read_file(path: str, workdir: Path):
-    p = Path(path)
-    if not p.is_absolute():
-        p = workdir / p
+    p = _inside(path, workdir)
+    if p is None:
+        return {"stderr": f"{path} is outside the work dir", "exit": 1}
     try:
         return {"content": p.read_text(encoding="utf-8", errors="replace")[:MAX_OUT * 4], "exit": 0}
     except OSError as e:
@@ -113,8 +112,8 @@ def screenshot(workdir: Path):
 
 TOOLS = {   # name: (fn, arg schema, what the motor lobe is told)
     "python": (python, {"code": {"type": "string"}}, "run python source, you get stdout back"),
-    "shell": (shell, {"command": {"type": "string"}}, "run one shell command (10 s limit, destructive ones are blocked)"),
-    "read_file": (read_file, {"path": {"type": "string"}}, "read a text file"),
+    "shell": (shell, {"command": {"type": "string"}}, "run one shell command (10 s limit)"),
+    "read_file": (read_file, {"path": {"type": "string"}}, "read a text file in the work dir"),
     "write_file": (write_file, {"path": {"type": "string"}, "content": {"type": "string"}}, "write a text file in the work dir"),
     "edit_file": (edit_file, {"path": {"type": "string"}, "old": {"type": "string"}, "new": {"type": "string"}},
                   "replace one exact occurrence of old with new in a work dir file"),
@@ -159,9 +158,9 @@ if __name__ == "__main__":
     assert run("read_file", {"path": "nope.txt"}, d)["exit"] == 1
     assert run("nothing", {}, d)["exit"] == 2
     assert run("shell", {"command": "echo hi"}, d)["stdout"].strip() == "hi"
-    assert run("shell", {"command": "rm -rf /"}, d)["exit"] == 3
     assert run("write_file", {"path": "a.txt", "content": "x=1\n"}, d)["exit"] == 0
     assert run("write_file", {"path": "../a.txt", "content": ""}, d)["exit"] == 1
+    assert run("read_file", {"path": __file__}, d)["exit"] == 1        # reads stay in the work dir, like writes
     assert run("edit_file", {"path": "a.txt", "old": "x=1", "new": "x=2"}, d)["exit"] == 0
     assert run("read_file", {"path": "a.txt"}, d)["content"] == "x=2\n"
     assert run("edit_file", {"path": "a.txt", "old": "zzz", "new": ""}, d)["exit"] == 1

@@ -103,7 +103,7 @@ provider 一个接口：`providers.chat(provider, model, messages, *, schema, im
 
 runner.py 一条直线：intake → fast 或 look → 证人循环（`_plan` 给顺序，`_need` 给要几个一致和锚，`settle` 定案，`capped` 查上限）→ 代码路径 `_code` → language。状态是一个 TaskState（goal、观察、证人、工具结果、判决、代码、计数）；每步追加写 `runs/<task_id>/trace.jsonl`（start / model / call / refused / intake / tool / witness / doctest / best_of / verdict / effort / language_rejected / final），程序和观察各存一个 json。没有消息总线，没有重试回路。
 
-工具是普通函数（tools.py）：`python`（子进程 10 秒，工作目录隔离；JSON 里写成字面 `\n` 的程序先还原再编译）、`shell`、`read_file` / `write_file` / `edit_file`（只在工作目录）、`web_fetch`、`screenshot`（交给 perception）。注册表导出 JSON schema 给 motor 约束选择。没有真沙箱。
+工具是普通函数（tools.py）：`python`（子进程 10 秒，cwd 设在工作目录，`-I` 只隔离环境变量和 site-packages，不隔离文件系统；JSON 里写成字面 `\n` 的程序先还原再编译）、`shell`（`shell=True`，10 秒）、`read_file` / `write_file` / `edit_file`（三个都过 `_inside()`，只在工作目录）、`web_fetch`、`screenshot`（整屏，交给 perception）。注册表导出 JSON schema 给 motor 约束选择。**没有沙箱**：motor 叶拿到全部七个工具，python 和 shell 用你的身份执行模型写的任何东西，只有 10 秒超时拦着。文件工具锁在工作目录，这两个锁不住——曾经有一条正则挡 rm/format/shutdown 这类词，2026-09-16 删了，因为 `python -c` 一句就绕过去，留着只会让人以为有防护。要在不信任的机器上跑，把整个进程放进容器。
 
 栈：Python 3.11+，httpx、pydantic v2、typer、rich、pyyaml、pillow；api 用 starlette + uvicorn；评测 pandas + pyarrow 读 parquet；OCR 可选 rapidocr-onnxruntime（`lobes[ocr]`）。不用 LangChain / LangGraph：控制流正是要测的东西，不能藏起来。
 

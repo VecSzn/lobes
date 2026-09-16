@@ -160,6 +160,14 @@ llama-server from source (git, cmake, nvcc on PATH).
 `lobes models` shows what is loaded. `pip install -e .[dev,eval]` adds pytest and the
 suite readers for `lobes eval`; `.[ocr]` adds the second image reader.
 
+**What this runs on your machine.** The motor lobe answers anything computable by picking one
+tool and running it: a python subprocess, a shell command, a file read or write inside the
+run's work dir, a url fetch, a screenshot. The python and shell calls execute whatever the
+model wrote, as you, with a 10 second timeout and nothing else in the way — there is no
+sandbox, and the whole point of the design is that a program ran and printed the answer. The
+file tools are confined to the work dir; python and shell are not. On a machine you would not
+hand to a 3B model, put the whole process in a container.
+
 ## Status
 
 Verified on an RTX 4070 Laptop (8 GB): the models load and answer under grammar
