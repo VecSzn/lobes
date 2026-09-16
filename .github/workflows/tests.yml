@@ -10,6 +10,6 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install -e .[dev]
+      - run: pip install -e .[dev,eval]
       - run: pytest -q
       - run: python -m lobes.tools && python -m lobes.lobe.verifier && python -m lobes.eval

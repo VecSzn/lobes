@@ -8,7 +8,9 @@ The idea is simple: a company does not need its most expensive generalist for ev
 
 The current system uses five small models plus a deterministic verifier. The default profile fits an RTX 4070 Laptop GPU with 8 GB VRAM by swapping GPU models in and out; the executive classifier stays on CPU.
 
-## Result in one table
+[Scores](#benchmark-results) · [Architecture](#architecture) · [How it works](#how-it-works) · [Quick start](#quick-start) · [Conclusion](#conclusion)
+
+## Preview
 
 The main comparison is against a standalone Qwen3.5-9B with no scaffolding. On the 320 text items both systems can run, Lobes medium landed in the same score range across two repeated runs while using much less compute.
 
@@ -22,8 +24,6 @@ The main comparison is against a standalone Qwen3.5-9B with no scaffolding. On t
 That is about **59% of the tokens** and **55% of the wall time** of the 9B baseline. The two Lobes runs also show why I do not claim an accuracy win: 268 sits between 272 and 266. The repeat changed the score but barely changed the cost.
 
 On 60 harder compute-heavy items added later, Lobes scored 55 and 56 while the bare 9B scored 31. That result is useful, but it is not a clean model-vs-model comparison: Lobes has a Python tool and the bare baseline intentionally does not. I treat it as a result for the **whole runtime**, not evidence that the smaller models are individually smarter.
-
-[Scores](#benchmark-results) · [Architecture](#architecture) · [How it works](#how-it-works) · [Quick start](#quick-start) · [Conclusion](#conclusion)
 
 ---
 
@@ -74,6 +74,8 @@ flowchart LR
   end
 ```
 
+More implementation detail is in [`docs/ARCHITECTURE.en.md`](docs/ARCHITECTURE.en.md).
+
 ## How it works
 
 A request first reaches the executive. From there the system follows a small number of paths instead of running every model every time.
@@ -102,7 +104,7 @@ flowchart TD
 
 The important rule is that witnesses do not see each other's work. They receive the original request, plus image/OCR observations when needed. Two matching witnesses can settle a value. If a program ran successfully, model-written values cannot outvote its output. For requests with no computable evidence, the runtime requires repeated independent agreement instead.
 
-`--effort low|medium|high|xhigh|max|auto` changes thinking budgets, witness counts, repair attempts, and request caps. `auto` starts at medium and only climbs when the current budget is exhausted. The exact policy is documented in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+`--effort low|medium|high|xhigh|max|auto` changes thinking budgets, witness counts, repair attempts, and request caps. `auto` starts at medium and only climbs when the current budget is exhausted. The exact policy is documented in [`docs/ARCHITECTURE.en.md`](docs/ARCHITECTURE.en.md).
 
 ## Benchmark results
 
@@ -229,7 +231,8 @@ Current limitations:
 - [`lobes/`](lobes/) — runtime, model management, API, tools, and lobe implementations
 - [`lobes.yaml`](lobes.yaml) — model roster, providers, VRAM budget, and profiles
 - [`eval/`](eval/) — suites, preregistration, evaluation harness, and report
-- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — current design
+- [`docs/ARCHITECTURE.en.md`](docs/ARCHITECTURE.en.md) — current design in English
+- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — current design in Chinese
 - [`docs/DECISIONS.md`](docs/DECISIONS.md) — dated engineering decisions and failed ideas
 - [`tests/`](tests/) — unit tests
 
