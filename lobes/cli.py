@@ -90,8 +90,11 @@ def ask(prompt: str,
         schema: bool = typer.Option(False, help="constrain the reply to the Envelope schema"),
         think: bool = typer.Option(None, "--think/--no-think"),
         image: list[Path] = typer.Option(None),
+        effort: str = typer.Option(None, help="low, medium, high, xhigh or max; default is effort in lobes.yaml"),
         max_tokens: int = 2048):
     cfg = config.load()
+    if effort:
+        cfg["effort"] = effort
     if lobe is None:
         from .runner import run
         state = run(cfg, prompt, profile=profile, images=image)
@@ -121,13 +124,18 @@ def ask(prompt: str,
 @app.command("eval")
 def eval_(conditions: str = "A,B,B3,C,D,E,F", seeds: str = "0,1,2", suites: str = None,
           quick: bool = typer.Option(False, help="3 items per suite, for timing"),
+          tag: str = typer.Option("", help="subdirectory of eval/results, one per code version or machine"),
+          effort: str = typer.Option(None, help="reasoning effort for every condition; default is effort in lobes.yaml"),
           report: bool = typer.Option(False, help="print the tables from eval/results instead of running")):
     from . import eval as eval_
     if report:
-        print(eval_.report(quick))
+        print(eval_.report(quick, tag))
         return
-    eval_.main(config.load(), conditions.split(","), [int(x) for x in seeds.split(",")], quick,
-               suites.split(",") if suites else None)
+    cfg = config.load()
+    if effort:
+        cfg["effort"] = effort
+    eval_.main(cfg, conditions.split(","), [int(x) for x in seeds.split(",")], quick,
+               suites.split(",") if suites else None, tag)
 
 
 @app.command()

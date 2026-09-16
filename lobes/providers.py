@@ -4,6 +4,7 @@ Structured output goes through response_format json_schema. llama-server turns t
 grammar, so locally the JSON is valid by construction; remote providers mostly honour it too.
 """
 import base64
+import io
 import json
 import time
 from dataclasses import dataclass
@@ -20,13 +21,28 @@ class Reply:
     usage: dict
     ms: int
     timings: dict                 # llama-server only: prompt_n, predicted_n, predicted_per_second ...
+    finish: str | None = None     # "length" means the answer was cut off by max_tokens
+
+
+MIN_SIDE = 768   # OCRBench crops are often 200 px tall; the vision encoder reads them better blown up
 
 
 def _image_part(path):
     p = Path(path)
     mime = "image/png" if p.suffix.lower() == ".png" else "image/jpeg"
-    b64 = base64.b64encode(p.read_bytes()).decode()
-    return {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}}
+    raw = p.read_bytes()
+    try:
+        from PIL import Image
+        im = Image.open(io.BytesIO(raw))
+        if min(im.size) < MIN_SIDE:
+            k = MIN_SIDE / min(im.size)
+            im = im.convert("RGB").resize((round(im.width * k), round(im.height * k)), Image.LANCZOS)
+            buf = io.BytesIO()
+            im.save(buf, "PNG")
+            raw, mime = buf.getvalue(), "image/png"
+    except Exception:
+        pass            # not an image pillow can open; send it as-is and let the model complain
+    return {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{base64.b64encode(raw).decode()}"}}
 
 
 def chat(provider, model, messages, *, schema=None, images=None, thinking=None,
@@ -72,6 +88,7 @@ def chat(provider, model, messages, *, schema=None, images=None, thinking=None,
         usage=j.get("usage", {}),
         ms=int((time.perf_counter() - t0) * 1000),
         timings=j.get("timings", {}),
+        finish=j["choices"][0].get("finish_reason"),
     )
 
 

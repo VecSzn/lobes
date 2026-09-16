@@ -127,6 +127,98 @@ def test_state_machine(tmp_path, monkeypatch):
     assert kinds[:4] == ["start", "intake", "plan", "tool"] and kinds[-1] == "final" and kinds.count("verdict") == 2
 
 
+class FakeCtx:
+    """Enough of runner.Ctx for the verifier: every lobe is a model, chat replays canned replies."""
+    def __init__(self, tmp_path, replies, **cfg):
+        self.workdir, self.rundir, self.replies, self.cfg = tmp_path, tmp_path, iter(replies), cfg
+        self.effort = runner.effort(cfg)
+        self.trace = type("T", (), {"write": staticmethod(lambda *a, **k: None)})
+
+    def is_model(self, lobe):
+        return True
+
+    def chat(self, state, lobe, messages, **kw):
+        return _reply(next(self.replies))
+
+
+def _state(goal, answer, task_class, tools_out=None, images=()):
+    st = runner.TaskState("t", goal, list(images))
+    st.task_class = task_class
+    st.tool_results = {f"tool_{i}": {"stdout": o, "exit": 0} for i, o in enumerate(tools_out or [])}
+    st.candidate = Envelope(kind="step_result", goal=goal, answer=answer, next=Next(action="answer"))
+    return st
+
+
+def test_verifier_paths(tmp_path):
+    goal = 'def dbl(x):\n    """\n    >>> dbl(2)\n    4\n    """'
+    v = verifier.verify(FakeCtx(tmp_path, []), _state(goal, "def dbl(x):\n    return 2 * x", "code"))
+    assert (v.verdict, v.basis) == ("PASS", "evidence")                       # the task's own examples, no model
+    v = verifier.verify(FakeCtx(tmp_path, []), _state(goal, "def dbl(x):\n    return x", "code"))
+    assert v.verdict == "RETRY" and "0/1" in v.notes
+    # a blind test that raises inside itself is the test's fault, one that asserts is the candidate's
+    st = _state("write add(a, b)", "def add(a, b):\n    return a + b", "code")
+    v = verifier.verify(FakeCtx(tmp_path, [{"test": "assert add(1, 2) == 3\nhelper()"}]), st)
+    assert (v.verdict, v.basis) == ("PASS", "none") and "test itself broke" in v.notes
+    v = verifier.verify(FakeCtx(tmp_path, [{"test": "assert add(1, 2) == 4"}]), st)
+    assert v.verdict == "RETRY"
+    # a bare number on a task misfiled as code is not code: blind re-solve, and its answer wins when a tool printed it
+    st = _state("write 12345 in base 7", "240114", "code", ["50664"])
+    v = verifier.verify(FakeCtx(tmp_path, []), st)
+    assert v.verdict == "RETRY" and "not appear" in v.notes                    # evidence() sees the new number first
+    st.retries = 1
+    st.candidate.answer = "the result is 240114 in base 7"
+    v = verifier.verify(FakeCtx(tmp_path, [{"answer": "50664", "check": None}]), st)
+    assert (v.verdict, v.basis, v.answer) == ("PASS", "evidence", "50664")
+    # closed-book trivia: disagreement without anything to check is not a conflict
+    st = _state("who wrote it", "Alice", "qa")
+    v = verifier.verify(FakeCtx(tmp_path, [{"answer": "Bob", "check": None}]), st)
+    assert (v.verdict, v.basis) == ("PASS", "none")
+    st.candidate.confidence.basis = "consistency"
+    v = verifier.verify(FakeCtx(tmp_path, [{"answer": "Bob", "check": None}]), st)
+    assert (v.verdict, v.basis) == ("PASS", "consistency")
+
+
+def test_effort_samples(tmp_path):
+    """closed-book qa draws as many samples as the level says; unanimity is the only route to consistency"""
+    from lobes.lobe import reasoning
+    env = {"kind": "step_result", "goal": "g", "answer": "Alice", "next": {"action": "answer"}, "claims": []}
+    for level, n in (("low", 1), ("medium", 3), ("high", 5), ("max", 12)):
+        ctx = FakeCtx(tmp_path, [env] * n, effort=level)
+        out = reasoning.solve(ctx, _state("who wrote it", None, "qa"))
+        assert next(ctx.replies, None) is None, level                    # every reply consumed, no extra call made
+        assert (out.confidence.basis == "consistency") == (n > 1), level
+    ctx = FakeCtx(tmp_path, [env, dict(env, answer="Bob"), env], effort="medium")
+    assert reasoning.solve(ctx, _state("who wrote it", None, "qa")).confidence.basis == "self"
+    with pytest.raises(ValueError):
+        runner.effort({"effort": "ultra"})
+
+
+def test_seed_per_call(tmp_path, monkeypatch):
+    """the eval fixes the seed; until the call index was folded in, every hot sample came back identical"""
+    seeds = []
+    monkeypatch.setattr(runner.providers, "chat",
+                        lambda p, m, msgs, **kw: (seeds.append(kw["seed"]), Reply("{}", {}, None, {}, 1, {}))[1])
+    monkeypatch.setattr(runner.ModelManager, "ensure", lambda self, name: None)
+    cfg = config.load()
+    cfg["_root"], cfg["seed"] = tmp_path, 7
+    ctx = runner.Ctx(cfg, "specialists", runner.Trace(tmp_path / "trace.jsonl"), tmp_path)
+    st = _state("who wrote it", None, "qa")
+    for _ in range(3):
+        ctx.chat(st, "reasoning", [])
+    assert seeds == [7, 8, 9]
+
+
+def test_hedge_and_override(tmp_path):
+    from lobes.lobe import language
+    ctx = FakeCtx(tmp_path, [])
+    ctx.is_model = lambda lobe: False
+    st = _state("who wrote it", "Alice", "qa")
+    st.verdicts = [Verdict(verdict="PASS", basis="none")]
+    assert language.say(ctx, st).answer == language.HEDGE + "Alice"
+    st.verdicts = [Verdict(verdict="PASS", basis="consistency")]
+    assert language.say(ctx, st).answer == "Alice"
+
+
 def test_language_guard():
     from lobes.lobe.language import faithful
     assert faithful("17 x 23 = 391", "391", "what is 17 * 23")
@@ -142,3 +234,10 @@ def test_fast_route(tmp_path, monkeypatch):
                         Reply(text="hi there", data=None, reasoning=None, usage={}, ms=1, timings={}))
     state = runner.run(cfg, "hello", profile="specialists")
     assert state.route == "fast" and state.answer == "hi there" and state.steps == 0 and not state.verdicts
+
+
+def test_jsonl_line_separator(tmp_path):
+    from lobes import eval as ev
+    p = tmp_path / "x.jsonl"
+    p.write_text(json.dumps({"a": "one two"}, ensure_ascii=False) + "\n", encoding="utf-8")
+    assert ev.jsonl(p) == [{"a": "one two"}]

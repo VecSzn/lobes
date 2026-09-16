@@ -5,6 +5,7 @@ from .verifier import norm, nums
 
 SYS = ("You are the language lobe. Rewrite the draft answer for the user: same facts, same numbers, in the language "
        "of the goal, no new claims, no preamble. If uncertainties are listed, say so in one sentence at the end.")
+HEDGE = "Not sure. Best guess: "
 
 
 def faithful(out, draft, goal):
@@ -44,5 +45,8 @@ def say(ctx, state):
             answer = out
         elif out:
             ctx.trace.write("language_rejected", text=out[:500])   # the rewrite changed the facts; keep the draft
+    if answer and state.route != "fast" and state.task_class != "code" and not (
+            state.verdicts and state.verdicts[-1].verdict == "PASS" and state.verdicts[-1].basis != "none"):
+        answer = HEDGE + answer    # nothing backs it: say so where the user (and the SimpleQA judge) can see it
     return Envelope(kind="final", goal=state.goal, claims=cand.claims, answer=answer, uncertainties=unc,
                     confidence=confidence(state), next=Next(action="answer"))

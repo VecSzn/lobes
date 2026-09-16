@@ -14,13 +14,22 @@ import httpx
 
 from . import config
 from .lobe.verifier import norm, nums, same
-from .runner import MAX_STEPS, run
+from .runner import effort, run
 
 DATA = config.ROOT / "eval" / "data"
 RESULTS = config.ROOT / "eval" / "results"
 SHUFFLE_SEED = 20260914
-N = {"gsm8k": 50, "humaneval": 30, "tools": 20, "simpleqa": 50, "ocrbench": 20, "multistep": 10}
-SMALL = 10                    # seeds 1 and 2: first SMALL items of every suite except multistep
+# PREREG numbers were gsm8k 50, simpleqa 50, SMALL 10. The quick timing (A 64 s/item, B 24 s/item) projected
+# ~10 h, so the pre-registered cut rule applied: seeds 1-2 multistep only, gsm8k/simpleqa 30, B3 dropped.
+N = {"gsm8k": 30, "humaneval": 30, "tools": 20, "simpleqa": 30, "ocrbench": 20, "multistep": 10}
+SMALL = 0                     # seeds 1 and 2: first SMALL items of every suite except multistep
+
+
+def jsonl(path):
+    # not splitlines(): a U+2028 inside a model's answer counts as a line break there and cuts the record in two
+    return [json.loads(l) for l in path.read_text(encoding="utf-8").split("\n") if l.strip()]
+
+
 CONDITIONS = {                # cfg overrides on top of the profile; see PREREG for what each one is
     "A":  dict(profile="single-9b", no_escalate=True),
     "B":  dict(profile="single-4b", no_escalate=True),
@@ -100,7 +109,7 @@ def load_suite(name):
             it["images"] = [str(img)]
         return chosen
     else:                                       # tools, multistep: mine, small, all of them
-        return [json.loads(l) for l in (config.ROOT / "eval" / "suites" / f"{name}.jsonl").read_text(encoding="utf-8").splitlines() if l.strip()]
+        return jsonl(config.ROOT / "eval" / "suites" / f"{name}.jsonl")
     return _pick(items, name)
 
 
@@ -148,13 +157,13 @@ class Vram(threading.Thread):
                 self.peak = max(self.peak, int(line))
 
 
-def run_item(cfg, cond, seed, suite, item, vram):
+def run_item(cfg, cond, seed, suite, item, vram, tag=""):
     c = dict(cfg, seed=seed, **{k: v for k, v in CONDITIONS[cond].items() if k != "profile"})
-    task_id = f"eval-{cond}-s{seed}-{item['id']}"
+    task_id = f"eval-{tag + '-' if tag else ''}{cond}-s{seed}-{item['id']}"   # tagged runs keep their own traces
     shutil.rmtree(cfg["_root"] / "runs" / task_id, ignore_errors=True)
     vram.peak = 0
     t0 = time.perf_counter()
-    rec = {"cond": cond, "seed": seed, "suite": suite, "id": item["id"], "task_id": task_id}
+    rec = {"cond": cond, "seed": seed, "suite": suite, "id": item["id"], "task_id": task_id, "effort": c.get("effort") or "medium"}
     try:
         st = run(c, item["prompt"], profile=CONDITIONS[cond]["profile"], images=item.get("images"), task_id=task_id)
     except Exception as e:                      # one broken item must not kill the night
@@ -165,8 +174,7 @@ def run_item(cfg, cond, seed, suite, item, vram):
     for lobe, _, ms, _ in st.calls:
         lobe_ms[lobe] = lobe_ms.get(lobe, 0) + ms
     swap_ms = 0
-    for l in (cfg["_root"] / "runs" / task_id / "trace.jsonl").read_text(encoding="utf-8").splitlines():
-        r = json.loads(l)
+    for r in jsonl(cfg["_root"] / "runs" / task_id / "trace.jsonl"):
         if r["kind"] == "model":
             swap_ms += r["ms"]
     last = st.verdicts[-1] if st.verdicts else None
@@ -174,7 +182,7 @@ def run_item(cfg, cond, seed, suite, item, vram):
                tokens=st.usage, ms=st.ms(), lobe_ms=lobe_ms, swaps=st.swaps, swap_ms=swap_ms, vram_peak_mb=vram.peak,
                steps=st.steps, retries=st.retries, escalations=st.escalations, calls=len(st.calls),
                basis=last.basis if last else None, passed=bool(last and last.verdict == "PASS"),
-               stuck=st.steps >= MAX_STEPS and not (last and last.verdict == "PASS"))
+               stuck=st.steps >= effort(c)["steps"] and not (last and last.verdict == "PASS"))
     if suite in ("gsm8k", "tools"):             # lenient twin of the strict judge, reported next to it
         rec["gold_in_answer"] = item.get("gold", item.get("answer")).replace(",", "") in nums(st.answer or "")
     return rec
@@ -188,9 +196,11 @@ def plan(cond, seed, quick, suites=None):
         yield suite, load_suite(suite)[:n]
 
 
-def main(cfg, conditions, seeds, quick=False, suites=None):
+def main(cfg, conditions, seeds, quick=False, suites=None, tag=""):
+    sys.stdout.reconfigure(errors="replace")  # windows console is gbk; an umlaut in an answer killed a run
     fetch()
-    RESULTS.mkdir(parents=True, exist_ok=True)
+    results = RESULTS / tag                   # a tag keeps one code version's run apart from another's
+    results.mkdir(parents=True, exist_ok=True)
     vram = Vram()
     vram.start()
     for cond in conditions:
@@ -200,26 +210,26 @@ def main(cfg, conditions, seeds, quick=False, suites=None):
             print(f"{cond}: skipped, {prov} has no api key")
             continue
         for seed in seeds:
-            out = RESULTS / f"{'quick-' if quick else ''}{cond}-s{seed}.jsonl"
+            out = results / f"{'quick-' if quick else ''}{cond}-s{seed}.jsonl"
             done = set()
             if out.exists():
-                done = {(json.loads(l)["suite"], json.loads(l)["id"]) for l in out.read_text(encoding="utf-8").splitlines() if l.strip()}
+                done = {(r["suite"], r["id"]) for r in jsonl(out)}
             for suite, items in plan(cond, seed, quick, suites):
                 for item in items:
                     if (suite, item["id"]) in done:
                         continue
-                    rec = run_item(cfg, cond, seed, suite, item, vram)
+                    rec = run_item(cfg, cond, seed, suite, item, vram, tag)
                     with open(out, "a", encoding="utf-8") as f:
                         f.write(json.dumps(rec, ensure_ascii=False) + "\n")
                     print(f"{cond} s{seed} {suite} {item['id']}: {'ok' if rec['correct'] else 'x '} {rec['ms']} ms "
                           f"{rec.get('tokens', {}).get('total_tokens', 0)} tok {rec.get('answer', rec.get('error', ''))[:60]!r}", flush=True)
 
 
-def report(quick=False):
+def report(quick=False, tag=""):
     """Markdown tables from eval/results; the narrative in REPORT.md is written by hand."""
     recs = []
-    for p in sorted(RESULTS.glob(f"{'quick-' if quick else ''}[A-F]*-s*.jsonl")):
-        recs += [json.loads(l) for l in p.read_text(encoding="utf-8").splitlines() if l.strip()]
+    for p in sorted((RESULTS / tag).glob(f"{'quick-' if quick else ''}[A-F]*-s*.jsonl")):
+        recs += jsonl(p)
     recs = [r for r in recs if "error" not in r]
     conds = [c for c in CONDITIONS if any(r["cond"] == c for r in recs)]
     out = []
@@ -245,10 +255,14 @@ def report(quick=False):
     table("stuck loop %", lambda rs: 100 * sum(r["stuck"] for r in rs) / len(rs))
     table("VRAM peak MB (max over items, includes the desktop)", lambda rs: max(r["vram_peak_mb"] for r in rs))
     table("simpleqa: abstained %", lambda rs: 100 * sum(r["abstained"] for r in rs) / len(rs), ["simpleqa"])
-    table("simpleqa: unsupported % (answered and wrong)",
-          lambda rs: 100 * sum((not r["abstained"]) and (not r["correct"]) for r in rs) / len(rs), ["simpleqa"])
-    table("lenient: gold number anywhere in the answer %",
-          lambda rs: 100 * sum(r.get("gold_in_answer", False) for r in rs) / len(rs), ["gsm8k", "tools"])
+    table("simpleqa: confident correct % (correct and not abstained)",   # v2 hedges; the v1 judge alone would credit a hedged right guess
+          lambda rs: 100 * sum(r["correct"] and not r["abstained"] for r in rs) / len(rs), ["simpleqa"])
+    table("simpleqa: empty answer %", lambda rs: 100 * sum(not r["answer"].strip() for r in rs) / len(rs), ["simpleqa"])
+    table("simpleqa: unsupported % (answered, not abstained, wrong)",
+          lambda rs: 100 * sum(bool(r["answer"].strip()) and not r["abstained"] and not r["correct"] for r in rs) / len(rs),
+          ["simpleqa"])
+    table("lenient: gold number anywhere in the answer %",  # or-ed with strict: "42.0" vs gold "42" misses the string test
+          lambda rs: 100 * sum(r["correct"] or r.get("gold_in_answer", False) for r in rs) / len(rs), ["gsm8k", "tools"])
     out.append("\n### multistep across seeds: accuracy % per seed, mean, std\n\n| cond | s0 | s1 | s2 | mean | std |\n|---|---|---|---|---|---|")
     for c in conds:
         per = []

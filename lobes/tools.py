@@ -22,7 +22,24 @@ def _run(argv, workdir, shell=False):
     return {"stdout": p.stdout[-MAX_OUT:], "stderr": p.stderr[-MAX_OUT:], "exit": p.returncode}
 
 
+def _unescape(code):
+    """granite writes newlines as a literal backslash-n inside the json string. If the code as given does not
+    compile and the unescaped one does, run that; the motor lobe never learns the difference."""
+    try:
+        compile(code, "<tool>", "exec")
+        return code
+    except SyntaxError:
+        pass
+    fixed = code.replace("\\n", "\n").replace("\\t", "\t").replace('\\"', '"')
+    try:
+        compile(fixed, "<tool>", "exec")
+        return fixed
+    except SyntaxError:
+        return code
+
+
 def python(code: str, workdir: Path):
+    code = _unescape(code)
     res = _run([sys.executable, "-I", "-c", code], workdir)
     if res["exit"] == 0 and not res["stdout"].strip() and "print" not in code:
         # small models write `17 * 23` and expect the value back; show the last expression like a REPL would
@@ -139,6 +156,8 @@ if __name__ == "__main__":
     assert run("python", {"code": "print(6*7)"}, d)["stdout"].strip() == "42"
     assert run("python", {"code": "x = 6\nx * 7"}, d)["stdout"].strip() == "42"
     assert run("python", {"code": "x = 6"}, d)["stdout"] == ""
+    assert run("python", {"code": 'x = 6\\ny = 7\\nprint(f\\"{x*y}\\")'}, d)["stdout"].strip() == "42"
+    assert run("python", {"code": 'print("a\\nb")'}, d)["stdout"] == "a\nb\n"
     assert run("python", {"code": "import time; time.sleep(30)"}, d)["exit"] == -1
     assert run("read_file", {"path": "nope.txt"}, d)["exit"] == 1
     assert run("nothing", {}, d)["exit"] == 2
