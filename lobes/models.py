@@ -38,6 +38,15 @@ class ModelManager:
         r.raise_for_status()
         return {m["id"]: m["status"]["value"] for m in r.json()["data"]}
 
+    def validate(self, names):
+        """Check the router's roster without loading or unloading any model."""
+        status = self.status()
+        missing = sorted(set(names) - status.keys())
+        if missing:
+            raise RuntimeError(f"router does not know {', '.join(missing)}; restart `lobes serve` "
+                               "to rebuild models.ini from the local model files")
+        return status
+
     def loaded(self):
         return [n for n, s in self.status().items() if s == "loaded"]
 
@@ -51,7 +60,7 @@ class ModelManager:
             return self._ensure(name)
 
     def _ensure(self, name):
-        st = self.status().get(name)
+        st = self.validate([name])[name]
         if st == "loaded":
             self._touch(name)
             return 0
@@ -87,12 +96,12 @@ class ModelManager:
             r = httpx.get(self.base + "/models", timeout=10).json()["data"]
             st = next((m["status"] for m in r if m["id"] == name), None)
             if st is None:
-                raise RuntimeError(f"router does not know {name}; run `lobes install` to regenerate models.ini")
+                raise RuntimeError(f"router does not know {name}; restart `lobes serve` to rebuild models.ini")
             if st["value"] == want:
                 return
             if st.get("failed"):
                 raise RuntimeError(f"{name} failed to load, exit {st.get('exit_code')}; see llama-server log")
-            time.sleep(0.3)
+            time.sleep(0.05)    # a load is about 1 s and an unload 0.2 s on the 5090
         raise TimeoutError(f"{name} did not reach {want} in {timeout}s")
 
     # --- gpu ---

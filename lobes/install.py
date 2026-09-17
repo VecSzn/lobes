@@ -35,7 +35,8 @@ def download(url, dest: Path):
 # --- llama.cpp ---
 def find_server(bindir: Path):
     for exe in ("llama-server.exe", "llama-server", "llama.exe", "llama"):
-        hits = list(bindir.rglob(exe)) if bindir.exists() else []
+        # files only: a cloned but unbuilt source tree has directories named llama
+        hits = [p for p in bindir.rglob(exe) if p.is_file()] if bindir.exists() else []
         if hits:
             return hits[0]
     return None
@@ -94,9 +95,12 @@ def install_models(cfg, root: Path, names):
 
 def write_presets(cfg, root: Path):
     """models/models.ini for `llama-server --models-preset`. Only models whose files exist go in."""
-    lines = ["version = 1", "", "[*]", f"c = {cfg['llama']['ctx']}", "jinja = true", "n-gpu-layers = 999"]
+    # fit only re-checks memory when layers and context are set: 0.3-0.5 s of every load on the 5090, 09-17
+    lines = ["version = 1", "", "[*]", f"c = {cfg['llama']['ctx']}", "jinja = true", "n-gpu-layers = 999", "fit = off"]
     if cfg["llama"].get("threads"):
         lines.append(f"t = {cfg['llama']['threads']}")
+    if cfg["llama"].get("parallel"):
+        lines.append(f"np = {cfg['llama']['parallel']}")
     lines.append("")
     for n, m in cfg["models"].items():
         f = root / "models" / m["file"]
@@ -107,10 +111,14 @@ def write_presets(cfg, root: Path):
             lines.append(f"mmproj = {mmproj_path(root, m).as_posix()}")
         if m.get("ctx"):
             lines.append(f"c = {m['ctx']}")
+        if m.get("kv"):             # a quantized V cache needs flash attention
+            lines += ["flash-attn = on", f"cache-type-k = {m['kv']}", f"cache-type-v = {m['kv']}"]
         if m.get("device") == "cpu":
             lines.append("n-gpu-layers = 0")
         if m.get("resident"):
             lines.append("load-on-startup = true")
+        for k, v in (m.get("preset") or {}).items():     # any other llama-server option; an unknown key stops the router
+            lines.append(f"{k} = {({True: 'on', False: 'off'}.get(v, v) if isinstance(v, bool) else v)}")
         lines.append("")
     out = root / "models" / "models.ini"
     out.parent.mkdir(exist_ok=True)
