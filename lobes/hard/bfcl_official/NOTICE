@@ -1,0 +1,37 @@
+Vendored from the Berkeley Function-Calling Leaderboard.
+
+Upstream: https://github.com/ShishirPatil/gorilla
+Commit:   6ea57973c7a6097fd7c5915698c54c17c5b1b6c8 (main, 2026-03-23)
+Subtree:  berkeley-function-call-leaderboard/bfcl_eval/
+License:  Apache-2.0, full text in LICENSE next to this file.
+
+Why vendored instead of `pip install bfcl-eval`: the package declares 35 runtime
+dependencies, among them openai, anthropic, cohere, mistralai, google-genai, boto3,
+sentence-transformers, faiss-cpu, and hard pins on numpy==1.26.4 and filelock==3.20.0
+that would move this project's own environment. None of that is needed to score AST
+categories offline.
+
+Byte-identical copies:
+  ast_checker.py     <- bfcl_eval/eval_checker/ast_eval/ast_checker.py
+  enums.py           <- bfcl_eval/constants/enums.py
+  type_mappings.py   <- bfcl_eval/constants/type_mappings.py
+
+prompting.py collects verbatim blocks from three upstream files, since importing them
+whole would pull in tenacity, filelock and every model handler:
+  bfcl_eval/constants/default_prompts.py
+      OUTPUT_FORMAT_MAPPING, PARAM_TYPE_MAPPING, PROMPT_STYLE_TEMPLATES,
+      _PLAINTEXT_SYSTEM_PROMPT_TEMPLATE, _MARKDOWN_SYSTEM_PROMPT_TEMPLATE,
+      PROMPT_TEMPLATE_MAPPING, DEFAULT_SYSTEM_PROMPT_FORMAT
+  bfcl_eval/model_handler/utils.py
+      ast_parse, resolve_ast_call, resolve_ast_by_type,
+      default_decode_ast_prompting, parse_prompt_variation_params,
+      format_function_doc, formulate_system_prompt
+  bfcl_eval/utils.py
+      _get_language_specific_hint, _func_doc_language_specific_pre_processing
+      -- these two are the only edited blocks: the Java and JavaScript branches are
+         removed. The Python branch is unchanged.
+
+Helpers that exist solely for Java, JavaScript, XML or JSON return formats are bound to
+stubs that raise. The categories scored here are Python, which never reaches them.
+
+To refresh, re-download the three byte-identical files from the commit above and diff.

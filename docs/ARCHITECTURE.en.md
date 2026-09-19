@@ -2,160 +2,183 @@
 
 [中文](ARCHITECTURE.md) | English
 
-This document describes the current design. The reasons behind earlier versions are in [`DECISIONS.md`](DECISIONS.md), and benchmark numbers are in [`../eval/REPORT.md`](../eval/REPORT.md).
+This describes the current runtime: what the five slots do, how a request moves through them, how the caps are counted, and how the code is laid out. Scores are in [`../eval/REPORT.md`](../eval/REPORT.md) and the README.
 
-Lobes is built around one idea: small models are only useful as a system if they receive different information or perform different kinds of work. Chaining several similar prompts together mostly compounds errors.
+Chaining several small models compounds their errors. Splitting the work pays off in two cases: a module receives information the others do not have (an image, a tool result), or it does a different kind of work (writing an answer versus reading one). Running the same size of model again with a different prompt satisfies neither.
 
 ## Machine and backend
 
-The main local target is an RTX 4070 Laptop GPU with 8 GB VRAM. `lobes.yaml` currently reserves about 6.4 GB for models because the desktop already uses part of the card.
+The main target is an RTX 4070 Laptop with 8 GB. `lobes.yaml` reserves 6800 MB for models (`llama.vram_budget_mb`), which is 8188 minus what the desktop already holds.
 
-Inference runs through `llama.cpp` / `llama-server`. GPU models are loaded and unloaded on demand. The executive classifier stays on CPU and does not participate in GPU swapping.
+Inference runs through llama-server from llama.cpp b10951 in router mode: it starts without a model, `--models-preset` points at an ini file, `POST /models/load` and `/models/unload` load and unload on demand, and `GET /models` reports status. `install.write_presets` rewrites that ini on every `lobes serve`, listing only models whose weight files are present. The `[*]` block sets `c` (context), `jinja = true`, `n-gpu-layers = 999` and `fit = off`; `threads` and `parallel` are written only when configured. Windows takes a prebuilt release, Linux builds from the tagged source and needs git, cmake and nvcc.
 
-The evaluation runs used rented RTX 5090 machines so several requests could run in parallel without spending most of the benchmark time swapping models.
+On the rented 5090, `eval/pod.sh` edits the working copy first: the budget goes to 28000, `device: cpu` is deleted so the classifier runs on the GPU too, resident models get a real `vram_mb`, `threads` is added, and qwen3.5-4b gets a context of 65536. The four items that run at once come from `lobes eval --workers 4`, without which most of the wall time goes into swapping models.
 
-## Lobes
+## Slots and how they are filled
 
-| lobe | role | default implementation | location |
+`config.lobe(cfg, slot, profile)` reads lobes.yaml and returns either a model, as in `("local", "qwen3.5-4b")`, or something that is not a model, as in `("impl", "passthrough")`. The runtime works with slot names only. No model name is hardcoded anywhere in it.
+
+The default profile is `specialists`:
+
+| slot | job | filled with | where |
 |---|---|---|---|
-| executive | classify the request; decide whether a program is useful | Granite 4.0 H 1B Q8 | CPU, resident |
-| perception | read images and answer image questions | Qwen3.5-2B + mmproj | GPU |
-| reasoning | main reasoning witness; write code and recomputation programs | Qwen3.5-4B Q4 | GPU |
-| motor | produce a program directly from the request; stdout becomes a witness | Granite 4.0 H Micro 3B Q4 | GPU |
-| verifier | run examples and deterministic checks | Python code | CPU |
-| language | turn settled values into a normal answer without changing them | Gemma 4 E2B Q4 | GPU |
+| executive | decide whether the request is hard | brick-2-max Q8 | CPU, resident |
+| perception | read images: describe them, copy out their text | qwen3.5-2b + mmproj | GPU, swapped |
+| reasoning | work the request out and write the reply; calls `python` itself | qwen3.5-4b | GPU, swapped |
+| motor | the tool hand: makes the calls reasoning asks for, then answers from the results | granite-h-micro | GPU, swapped |
+| language | read the finished draft against the request and say what is wrong | gemma4-e2b | GPU, swapped |
 
-Model names live in [`../lobes.yaml`](../lobes.yaml). The runtime code works with lobe names and provider/model references instead of hardcoding a model family.
+The `v1` profile also fills a `router` slot and the chat / code / math / documents / knowledge expert slots: the router picks one and `Ctx.slot` points reasoning at it. `check` is not a slot of its own, it is the same reasoning model reading its own draft.
 
-There is also a `shared` profile where several lobes reuse one Qwen3.5-4B model with different prompts. The single-model profiles are used as evaluation controls.
+In the evaluation profiles, `none` leaves a slot empty and `passthrough` means that step runs no model.
 
-## Why the executive only classifies
+## How a request moves
 
-Earlier versions let the executive produce a plan and then showed that plan to the other lobes. That made the whole system inherit the executive's interpretation of the task. If the first model misunderstood one clause, the other models often repeated the same mistake.
-
-The current executive therefore does much less: it classifies the request and decides whether computation is useful. It is not a witness and does not decide the final answer.
-
-## Witnesses
-
-The system does not use one model as a judge over another model. Instead, it tries to get independent witnesses.
-
-A witness receives the original request. For image tasks it may also receive observations from perception and OCR, with the source labelled. It does not see another witness's plan, program, or answer.
-
-A witness returns values in a simple contract: one requested value per line, in request order. A program-backed witness also records that its value came from actual execution.
-
-Two matching witnesses can settle an answer. Once a program has run successfully, a pair of model-written values cannot outvote the program output. Closed-book questions require repeated independent agreement because there is no external evidence to check.
-
-## Request flow
-
-```text
+```
 user
-  |
-  v
-executive
-  |-- chat ------------------------------> short answer
-  |-- image --> perception + OCR --------> witnesses
-  |-- code requested --> reasoning ------> run examples when available
-  |-- computable --> reasoning + motor --> independent programs / values
-  `-- closed book --> reasoning samples -> consistency check
-
-settled values -> language -> reply
-unsettled values -> best available answer + uncertainty marker
+ │
+ ├─ executive.intake: easy / anything else -> simple / hard; with a router, pick an expert
+ ├─ images: perception describes, ocr transcribes, each a separate labelled observation
+ ├─ relay puts language before the draft: language.requirements writes down what the reply must satisfy
+ ├─ reasoning.solve: think, call tools, write the draft
+ │    ├─ python it calls itself
+ │    └─ files / shell / web / screen -> motor makes those calls and reports back in words
+ ├─ hard route with checks configured: language.review reads the draft; a rejection triggers a rewrite
+ └─ a cap hit with no draft yet: reasoning.answer_now answers from the conversation it already has
 ```
 
-### Computable requests
+### executive
 
-The reasoning lobe thinks through the problem and also writes a small recomputation program. The motor lobe sees the original request independently and writes its own program. Program output is used as the value instead of trusting the prose around it.
+The difficulty model is a classifier, and the prompt asks it one thing: easy, medium or hard, at temperature 0 and 5 tokens. Only a reply that starts with easy takes the simple route; everything else is hard. A long request is cut to its first 1200 and last 400 characters (`ends()`), because a whole document takes seconds on the CPU and the ask is usually at the ends.
 
-If the programs or values disagree, the runtime can request more reasoning samples until the effort budget is exhausted.
+A request with images skips classification and is always hard. So is every request when the profile has no executive model.
 
-### Code-generation requests
+When the profile fills expert slots, fills `router`, and the request carries no images, the router picks a topic through a schema-constrained enum. A reply that does not parse returns None and reasoning answers instead.
 
-When the user wants source code, reasoning produces the implementation. If the prompt contains runnable examples, the verifier runs those examples. A failed candidate can be rewritten with the failure attached, up to the repair budget for the selected effort level.
+For an api client that runs its own tools, the results coming back count as later steps of the same request: `_seen` records the route, topic, timestamp, the rejections so far and how many checks have run, keyed by (profile, tool call id). It keeps 1024 entries and drops the oldest first, so the request is still recognised after the client has compacted it away.
 
-If there are no usable examples, the runtime does not pretend it verified the code.
+### perception
 
-### Image requests
+The vision model returns three fields against a schema: description, text (every piece of readable text, verbatim) and details. The result is written to `perception_N.json` in the run directory and its summary becomes a `lobe:perception` observation.
 
-Perception reads the image. RapidOCR can provide a second, non-LLM reading. Because only perception actually sees the pixels, an image answer cannot be settled only by several reasoning samples that all read the same notes.
+With `lobes[ocr]` installed, RapidOCR reads the image separately, keeping lines scored 0.5 and above, and that becomes a second observation labelled `tool:ocr`. The two stay separate. Without the package the step is skipped.
 
-## Deterministic verifier
+A tool that returns an image, such as screenshot, comes through here too.
 
-The verifier used to be another model. That did not work well: a smaller model often either approved a stronger model without adding evidence or introduced another guess.
+### reasoning
 
-The current verifier is mostly plain code. It handles things that can be checked exactly:
+Its brief holds the request; the observations when there are images, each labelled with its source; the requirements list when the relay puts language first, named as one lobe's reading of the request so that the request itself is what counts; and one line of local time (asked the date, qwen made one up, and one stamp per turn keeps the tool steps cacheable).
 
-- run examples included in a programming prompt;
-- compare witness values;
-- match values against OCR text;
-- preserve settled values through the language rewrite;
-- track whether evidence came from execution or only from consistency.
+Tools are handed over in one of three ways:
 
-This change made the system simpler and easier to reason about.
+- the api client brings its own: those are the specs, and a call ends the request by going back to the client;
+- the profile has a motor: reasoning gets `python` and a `motor` tool it describes its needs to in words;
+- no motor: reasoning holds every tool.
 
-## Effort levels
+A model with `tools: false` in lobes.yaml gets none at all, and its calls come back as plain text that nothing runs.
 
-`low`, `medium`, `high`, `xhigh`, `max`, and `auto` scale several things together: thinking budget, number of witnesses, repair attempts, and per-request caps.
+Several things in the loop came out of measurements:
 
-| level | thinking | think tokens | reasoning samples | repairs | witness cap | call cap | token cap | time cap |
-|---|---|---:|---:|---:|---:|---:|---:|---:|
-| low | off | 0 | 1 | 1 | 4 | 8 | 6,000 | 120 s |
-| medium | on | 6,000 | 3 | 2 | 8 | 16 | 16,000 | 300 s |
-| high | on | 16,000 | 5 | 3 | 12 | 24 | 40,000 | 600 s |
-| xhigh | on | 32,000 | 8 | 4 | 18 | 36 | 80,000 | 1,200 s |
-| max | on | context limit | 12 | 6 | 30 | 60 | none | none |
+- An empty reply with only thinking: the thought goes back as an assistant turn and the model is asked again without a thinking budget. Without this, qwen3.5-4b sent the same failing call 30 times. If it still says nothing, the thought becomes the answer.
+- A tool call cut off while its arguments were being written: nothing runs, the client never sees the broken call, and the retry gets twice the room and is forced to think. Cut a second time, the request stops and says so.
+- The body cut off mid-sentence: the conclusion is asked for on its own, without thinking, in at most 2048 tokens, and appended after the draft. A conclusion that is itself cut is dropped, because a reader takes the last block for the answer (GPQA 09-18, 23 items: keeping the cut ones scored 1 and left 19 with no answer, against 7 and 13 for the draft alone).
+- The same (tool, args, result) three times ends the request with that result instead of a fourth call. Twice raises the thinking budget to the level's cap and writes a `stalled` record. The rule covers the client's tool calls as well, across the whole request.
 
-`auto` starts at medium and only moves upward if the current witness budget is exhausted without settling the answer.
+When a cap lands before there is a draft, `answer_now` gets one more turn: one call, no tools, at most 2048 tokens, with the caps that ended the request not applied to it. Any tool call left dangling is answered with "Not run: the request ran out of budget." first, because no server takes a conversation with an unanswered call in it. What the model read and worked out reaches the reader instead of a line saying it could not finish.
 
-The benchmark so far does not show a general benefit from high effort. On the main evaluation, high stayed inside the medium score spread while using much more compute.
+### motor
 
-## VRAM strategy
+The tool hand receives a sentence, not a call. It makes one round of tool calls, and its second call has no tools, so it answers from what came back. A request that needs another step returns through reasoning, which is the lobe holding the plan.
 
-The 4070 target cannot keep every GPU model resident at once, so the model manager uses a VRAM budget and LRU-style swapping. The executive is CPU-resident and never evicted.
+The results stay in motor's own conversation. Handing them back raw made the relay's context the solver's context: a `cat` of a file put the whole file into the solver's conversation, where every later turn prefills it again. The second model earns its place by holding those results so the first one never has to.
 
-The main GPU path is roughly:
+When the second call says nothing about the results, the raw results go back instead.
 
-```text
-reasoning -> motor -> language
+### language
+
+After the draft (`relay.language = "review"`, the default) it receives the request, every tool reasoning ran with its real result, and the draft, and replies either OK or with one statement of what is wrong. Only the first line is read, stripped of whitespace and of `` .!*` `` before it is compared to OK. The verdict is plain text rather than a tool call because gemma-4-E2B wrote most of its send_back calls without the call marker, so they arrived as text and passed.
+
+Before the draft (`"requirements"`) it sees the request alone and writes a list of 1 to 16 lines, each at most 300 characters, against a schema. The schema is doing real work: told in words not to answer the request, it answered 2 of the first 3 items, and that answer would have reached the solver's brief as the thing the reply has to satisfy. The position came out of the other half of the job: over 100 ifeval items, every answer that scored wrong had met all of the request's conditions but one, and reading the draft afterwards caught 2 of those 25. Listing a condition is copying, checking one is counting, and a 2B does the first and not the second.
+
+A rejection is rewritten before the next check runs. A rejection from the last check is recorded as an uncertainty instead of triggering a rewrite: over three 250-item runs the review sent back 26 answers, and the rewrite rescued none and broke two, with the criticism mostly arguing about the arithmetic, which is the part gemma reads worse than the solver.
+
+`checks_on` defaults to `hard`, so the simple route runs no checks. A checker that already passed the current draft does not read it again (`recheck: False`). How many checks have run is remembered across a client's tool steps.
+
+## Caps
+
+| level | thinking tokens per call | generated tokens per request | model calls | seconds |
+|---|---:|---:|---:|---:|
+| low | 1,024 | 16,384 | 12 | 180 |
+| medium | 4,096 | 32,768 | 20 | 420 |
+| high | 8,192 | 65,536 | 30 | 900 |
+
+On top of the thinking, a reply gets 4,096 tokens (`ANSWER`), a conclusion 2,048 (`CONCLUSION`), and the simple route thinks a fixed 1,024 (`SIMPLE_THINK`).
+
+Every level runs the same relay. A level sets how long reasoning may think per call and these caps, and changes nothing about who hands off to whom. Nothing escalates on its own. The caps are checked before every model call, each call's `max_tokens` is cut to what is left of the request's generated-token budget, and the thinking budget is then cut to half of that `max_tokens`. Tool runs do not count as calls, so a program written by the last allowed call still runs. The seconds cap stops new calls and bounds each wait on llama-server, but does not interrupt a model load or a tool, so a request can take longer than it. When a cap stops a request, the draft so far goes out with a note.
+
+`auto`, `xhigh` and `max` are accepted as medium, high and high. The entry points are `effort:` in lobes.yaml, `lobes ask --effort`, and `reasoning_effort` in the api.
+
+The relay itself can be overridden per profile through `relays: {profile: {...}}` in lobes.yaml: `think` is effort, off, escalate or first, and a model with its own `think` in lobes.yaml wins; `checks_on` is hard or all; `language` is review or requirements; `checks` lists the checks per level; `recheck` decides whether a checker that passed reads the draft again.
+
+## VRAM
+
+The model manager adds a budget in megabytes on top of llama-server's router. The router counts models (`--models-max`); this counts megabytes: before loading X it unloads the least recently used non-resident model until X fits.
+
+A model with `resident: true` is never unloaded, and one with `vram_mb` at 0 is not a candidate. Recency is a counter rather than `time.time()`, which ticks every 15 ms on Windows. Loads and unloads are timed, and nvidia-smi is read once after a load and kept next to the estimate so the yaml numbers can be corrected. The poll interval is 0.05 s, the timeout 300 s, and a failed load is reported with its exit code. Tasks running in parallel share one router, so the whole load path takes a global lock: a second load of a model that is already loading returns a 400.
+
+In `specialists` the swap order follows the request: reasoning, then motor, then language. When the next one does not fit, the least recently used model is unloaded until it does; when nothing can be unloaded the manager raises instead of quietly going over budget.
+
+## Tools
+
+Eight, all ordinary functions in `lobes/tools.py`: `python`, `shell`, `read_file`, `write_file`, `edit_file`, `web_search`, `web_fetch`, `screenshot`. The registry exports openai-format schemas for llama-server's chat template.
+
+`python` is one long-lived process per request, like a notebook: a function defined or a module imported in one call is still there in the next (76 NameErrors in 2469 calls on 09-17, 39 of them a module imported earlier). The last expression is echoed the way a REPL would. The interpreter restarts after a timeout.
+
+There is no sandbox. `python` and `shell` run whatever the model wrote, with a 10-second timeout as the only guardrail. Started as root, children drop to `nobody` (`UNPRIVILEGED`); started as yourself, they run with your permissions. The file tools go through `_inside()` and stay in the run's work directory; these two are not confined to it. Put the whole process in a container for untrusted workloads.
+
+## How the code is organised
+
+Two processes: the llama-server router (started by `lobes serve`, which spawns a child per model), and one Python process.
+
+The CLI has `install`, `serve`, `models`, `load`, `unload`, `ask`, `eval`, `api`, plus `providers test`. `lobes api` opens two endpoints on port 8090: `/v1/chat/completions` (`lobes-v1` selects the v1 profile, `lobes/<name>` any profile) and `/v1/responses`, the Responses API that Codex speaks since it dropped chat completions. A request that carries `tools` gets the calls back to run itself; without them the lobes use their own. With `stream=true` the relay's steps go out as `reasoning_content` and the answer as `content`.
+
+There is one provider interface: `providers.chat(provider, model, messages, *, schema, images, thinking, thinking_budget, tools, temperature, max_tokens, seed, timeout, ctx, on_delta) -> Reply`, and one OpenAI-compatible adapter covers both llama-server and LM Studio. The thinking switch is sent explicitly on every call as `chat_template_kwargs.enable_thinking`. The seed gets the call index added to it.
+
+runner.py is a straight line and the state is one `TaskState`. Every step appends to `runs/<task_id>/trace.jsonl`, with records of kind start, model, intake, requirements, call, tool, cut, stalled, review, cap, stop, language_error and final. Each tool's raw result is stored as its own json. There is no message bus and no retry loop.
+
+Only one structured object passes between modules: `Observation` in `schema.py` (source, ref, summary), written by perception and read into the brief. Everything else is plain text and fields on `TaskState`.
+
+```
+Lobes/
+  README.md  README.zh-CN.md  lobes.yaml  pyproject.toml
+  docs/    ARCHITECTURE.md  ARCHITECTURE.en.md  img/
+  lobes/   cli.py config.py providers.py schema.py models.py runner.py tools.py install.py
+           api.py responses.py eval.py
+           lobe/  executive.py perception.py reasoning.py motor.py language.py
+           hard/  official graders: ifeval, math500, bfcl, livecodebench, repo
+  eval/    suites/ (jsonl suites, make.py generates the tools and multistep answers)
+           data/ (suite files and the repo snapshot)
+           PREREG*.md  REPORT.md  plot.py (the README figures)  pod.sh (how the rented 5090 runs)
+  tests/   test_lobes.py  test_provider_limits.py  test_responses.py
+  runs/  models/  eval/results/      not in git
 ```
 
-The exact measured model sizes and swap timings are kept in the Chinese architecture notes and `lobes.yaml`. They are implementation details rather than assumptions of the runtime.
+Stack: Python 3.11+, httpx, pydantic v2, typer, rich, pyyaml, pillow, starlette, uvicorn; the evaluation adds pandas and pyarrow for parquet; OCR is optional through rapidocr-onnxruntime (`lobes[ocr]`). No LangChain or LangGraph: the control flow is the thing this project measures, and hiding it would make it unmeasurable.
 
-## Data passed between modules
+## Evaluation
 
-The main structured objects are:
+`lobes eval` runs the suites, one JSONL line per item, resumable. A condition is a profile from lobes.yaml, or one of the preregistered codes in `CONDITIONS` in `lobes/eval.py`. Results land in `eval/results/<tag>/<condition>-s<seed>.jsonl`, and the tag keeps one code version's run, or one machine's, apart from another's.
 
-```text
-Observation  source + reference + summary
-Witness      lobe + value + whether execution produced it + reference
-Verdict      pass / retry / conflict + evidence basis + notes
-Envelope     request kind + answer + uncertainties + confidence + next action
-```
+Judging is all code, with no model as a judge: GSM8K compares the last number, HumanEval and MBPP+ run the official tests, and ifeval, math500, bfcl and livecodebench use their upstream graders, vendored verbatim under `lobes/hard/`. Each item records correctness, abstention, tokens, seconds, swaps, peak VRAM, the number of calls, which route it took, and whether it hit a cap.
 
-The schemas live in `lobes/schema.py` and are also exported as JSON schemas for constrained decoding. `Witness` is the exception: it never reaches a model, so it is a plain dataclass in `lobes/lobe/__init__.py`.
+The hypotheses and thresholds were written down before each run in `eval/PREREG*.md`, those files are frozen, and deviations are recorded in REPORT. Those rounds ran against earlier runtimes, and their numbers are kept as they were measured.
 
-## Processes
+## Prior work
 
-A normal local run has two main processes:
+The closest are HuggingGPT (2023, an LLM as controller dispatching to expert models) and Mixture-of-Agents (2024). NVIDIA's 2025 "Small language models are the future of agentic AI" argues the same direction. Model-level cascades and routing are FrugalGPT and RouteLLM, and speculative decoding pairs a small model with a large one too. On tools there are ReAct, Toolformer, PAL, Gorilla and BFCL. Cognitive architectures include Minsky's Society of Mind, ACT-R, SOAR, Global Workspace and CoALA. MoE (Switch, Mixtral) routes at the token level inside one jointly trained network, which is a different level from routing between modules. BAIR called this class of system compound AI systems in 2024.
 
-1. `llama-server`, which owns model loading and inference;
-2. the Python Lobes process, which owns routing, tools, verification, CLI, and API behavior.
+The brain metaphor has a hole in it: brain regions are trained together and share representations, while these models are not and pass lossy text between them. The regions that really map are perception (ViT), language and reasoning (LLM), motor (tool execution) and executive control (a classifier).
 
-`lobes api` exposes an OpenAI-compatible `/v1/chat/completions` endpoint, so another client can treat the whole Lobes runtime as one model.
+## Not done
 
-## Safety note
-
-The current Python and shell tools are intentionally not sandboxed. They run with the permissions of the current user and only have a timeout as a guardrail. File-specific tools are restricted to the run directory, but Python and shell are not.
-
-For untrusted workloads, the whole runtime should be placed inside a container or disposable environment.
-
-## What is still experimental
-
-The architecture is still changing. In particular:
-
-- there is no multi-turn memory yet;
-- the 8 GB swapping setup serves one request at a time;
-- closed-book factual recall is still weak;
-- the same-tool 9B ablation has not been run yet;
-- some design choices have only been tested on the current benchmark distribution.
-
-The project keeps these limitations visible because the point is to test the architecture, not just produce a good-looking score.
+Multi-turn memory, a real sandbox, predictive preloading, and finetuning a small model on the traces this thing collects. The last one is the only path by which a small specialised module genuinely beats a small general model with a different prompt, and this project did not get there. Concurrency only works when every model stays resident (the 5090 evaluation runs four items at once); the 8 GB swapping setup serves one request at a time.

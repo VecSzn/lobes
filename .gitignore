@@ -13,6 +13,11 @@ models/
 # per-task traces
 runs/
 
+# llama-server output, written by `lobes serve` and by eval/pod.sh
+serve.log
+serve.err.log
+eval-*.log
+
 # the goal prompt driving the build, not part of the project
 .goal.md
 
