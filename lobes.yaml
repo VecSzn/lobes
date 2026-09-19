@@ -14,23 +14,30 @@ llama:
 
 # name -> where to get it, how much GPU memory it takes, where it runs.
 # vram_mb = nvidia-smi delta measured 2026-09-14 after loading with ctx 16384, 4 slots, and one 512-token generation
+# sha256 = the file as downloaded from the repo on the line above. `lobes install` deletes anything that differs,
+#          which is what keeps HF_ENDPOINT safe to point at a mirror. A repo that requantizes will trip it; re-check
+#          the file on its model page, then update the hash here.
 models:
   brick-2-max:               # easy/medium/hard classifier on Qwen3.5-0.8B; CC BY-NC 4.0, English only
     repo: regolo/brick-complexity-2-max-Q8_0-GGUF
     file: brick-complexity-2-max-Q8_0.gguf
+    sha256: a5c06b8aac357ed94b5bc78fb11f846244c63b1c173c67b1ead33c24533f8b17
     device: cpu
     resident: true
     vram_mb: 0
   qwen3.5-2b:
     repo: unsloth/Qwen3.5-2B-GGUF
     file: Qwen3.5-2B-Q4_K_M.gguf
+    sha256: aaf42c8b7c3cab2bf3d69c355048d4a0ee9973d48f16c731c0520ee914699223
     mmproj: mmproj-F16.gguf
+    mmproj_sha256: 7035e9cb8d7c6a9681d07eef9a364783e86ea4cd73faab2eabb4f43a101830c7
     vram_mb: 2600
     thinking: true
   qwen3.5-4b:
     repo: unsloth/Qwen3.5-4B-GGUF
     file: Qwen3.5-4B-Q4_K_M.gguf
-    vram_mb: 3750            # nvidia-smi delta 2026-09-19 at ctx 65536; was 4638 at 131072
+    sha256: 00fe7986ff5f6b463e62455821146049db6f9313603938a70800d1fb69ef11a4
+    vram_mb: 3750            # nvidia-smi delta at the ctx and kv below; was 4638 at ctx 131072
     ctx: 65536               # Codex sends ~18k tokens of prompt and tools before any work. At 131072 the cache
                              # left no room for the tool hand and every handoff swapped a model out, 9 a request
     kv: q4_0                 # 1.1 GB of cache at 131072; found 3 of 3 planted facts in a 99k prompt
@@ -39,28 +46,34 @@ models:
   qwen3.5-4b-vl:
     repo: unsloth/Qwen3.5-4B-GGUF
     file: Qwen3.5-4B-Q4_K_M.gguf
+    sha256: 00fe7986ff5f6b463e62455821146049db6f9313603938a70800d1fb69ef11a4
     mmproj: mmproj-F16.gguf
+    mmproj_sha256: cd88edcf8d031894960bb0c9c5b9b7e1fea6ebee02b9f7ce925a00d12891f864
     vram_mb: 4300
     thinking: true
   granite-h-micro:
     repo: ibm-granite/granite-4.0-h-micro-GGUF
     file: granite-4.0-h-micro-Q4_K_M.gguf
-    vram_mb: 2300            # nvidia-smi delta 2026-09-19, alone at the default ctx
+    sha256: bcc78b9b25450101d1ad90d4b9a264e1bac892f534dfb76066f4eec792fdf023
+    vram_mb: 2300            # nvidia-smi delta, alone at the default ctx
   gemma4-e2b:
     repo: unsloth/gemma-4-E2B-it-GGUF
     file: gemma-4-E2B-it-Q4_K_M.gguf
+    sha256: 740185b21d22ceb83a11c3aa62ad5842ef32c70f6096d756bbee85a1e4ec34b8
     ctx: 32768
-    vram_mb: 1900            # nvidia-smi delta 2026-09-19, alone; 1800 at ctx 16384
-    tools: false             # llama.cpp gets its calls as plain text (DECISIONS 09-17), so it is given none
+    vram_mb: 1900            # nvidia-smi delta, alone at the ctx above; 1800 at ctx 16384
+    tools: false             # llama.cpp gets this model's calls as plain text, so it is given none
   granite-1b:                # v1 topic router; 330 of 341 on the 09-14 routing set, 0.85 s a call on the CPU
     repo: ibm-granite/granite-4.0-h-1b-GGUF
     file: granite-4.0-h-1b-Q8_0.gguf
+    sha256: f29248184ca766350e56e6d161c2a637ad302a6d595e15d4a62cd58327a0ac0e
     device: cpu
     resident: true
     vram_mb: 0
   nemotron-3-nano-4b:        # v1 math expert; NVIDIA open model license, English
     repo: lmstudio-community/NVIDIA-Nemotron-3-Nano-4B-GGUF
     file: NVIDIA-Nemotron-3-Nano-4B-Q4_K_M.gguf
+    sha256: 083af225449463dd7c38bebc888f9dcad187b834d8b15e08c297dda37c968b50
     ctx: 131072              # at 32768 a 38k-token Codex prompt ran out of room; 4 of its 42 layers hold a kv cache
     kv: q8_0                 # found 3 of 3 planted facts in a 106k prompt
     vram_mb: 4550            # nvidia-smi peak delta 2026-09-17 during that prompt, alone; 3550 at ctx 32768 f16
@@ -68,6 +81,7 @@ models:
   qwen3.5-9b:
     repo: unsloth/Qwen3.5-9B-GGUF
     file: Qwen3.5-9B-IQ4_XS.gguf
+    sha256: 7e918aeca06c52bcb528ea6b04b4ec957e75ee8c0a73138854c0dfcf371ea429
     vram_mb: 5200
     thinking: true
 
@@ -83,7 +97,7 @@ effort: medium
 profile: specialists
 profiles:
   specialists:                      # one family per lobe where it doesn't hurt; swapping is the normal case
-    executive:  local/brick-2-max     # granite-1b called most hard requests simple, see DECISIONS
+    executive:  local/brick-2-max     # granite-1b called most hard requests simple
     perception: local/qwen3.5-2b
     reasoning:  local/qwen3.5-4b
     motor:      local/granite-h-micro

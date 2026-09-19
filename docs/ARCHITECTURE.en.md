@@ -2,7 +2,7 @@
 
 [中文](ARCHITECTURE.md) | English
 
-This describes the current runtime: what the five slots do, how a request moves through them, how the caps are counted, and how the code is laid out. Scores are in [`../eval/REPORT.md`](../eval/REPORT.md) and the README.
+This describes the current runtime: what the five slots do, how a request moves through them, how the caps are counted, and how the code is laid out. Scores are in the README.
 
 Chaining several small models compounds their errors. Splitting the work pays off in two cases: a module receives information the others do not have (an image, a tool result), or it does a different kind of work (writing an answer versus reading one). Running the same size of model again with a different prompt satisfies neither.
 
@@ -28,7 +28,7 @@ The default profile is `specialists`:
 | motor | the tool hand: makes the calls reasoning asks for, then answers from the results | granite-h-micro | GPU, swapped |
 | language | read the finished draft against the request and say what is wrong | gemma4-e2b | GPU, swapped |
 
-The `v1` profile also fills a `router` slot and the chat / code / math / documents / knowledge expert slots: the router picks one and `Ctx.slot` points reasoning at it. `check` is not a slot of its own, it is the same reasoning model reading its own draft.
+The `v1` profile also fills a `router` slot and the code / math / knowledge expert slots. The router only chooses among the slots a profile has filled, and `Ctx.slot` points reasoning at the one it picks. `check` is not a slot of its own, it is the same reasoning model reading its own draft.
 
 In the evaluation profiles, `none` leaves a slot empty and `passthrough` means that step runs no model.
 
@@ -158,7 +158,7 @@ Lobes/
            hard/  official graders: ifeval, math500, bfcl, livecodebench, repo
   eval/    suites/ (jsonl suites, make.py generates the tools and multistep answers)
            data/ (suite files and the repo snapshot)
-           PREREG*.md  REPORT.md  plot.py (the README figures)  pod.sh (how the rented 5090 runs)
+           plot.py (the README figures)  pod.sh (how the rented 5090 runs)
   tests/   test_lobes.py  test_provider_limits.py  test_responses.py
   runs/  models/  eval/results/      not in git
 ```
@@ -171,7 +171,7 @@ Stack: Python 3.11+, httpx, pydantic v2, typer, rich, pyyaml, pillow, starlette,
 
 Judging is all code, with no model as a judge: GSM8K compares the last number, HumanEval and MBPP+ run the official tests, and ifeval, math500, bfcl and livecodebench use their upstream graders, vendored verbatim under `lobes/hard/`. Each item records correctness, abstention, tokens, seconds, swaps, peak VRAM, the number of calls, which route it took, and whether it hit a cap.
 
-The hypotheses and thresholds were written down before each run in `eval/PREREG*.md`, those files are frozen, and deviations are recorded in REPORT. Those rounds ran against earlier runtimes, and their numbers are kept as they were measured.
+Each round's hypotheses and thresholds were written down before it ran, and every departure from them afterwards. The earlier rounds ran against earlier runtimes and their numbers are kept as they were measured.
 
 ## Prior work
 

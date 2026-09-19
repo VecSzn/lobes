@@ -1,3 +1,5 @@
+import hashlib
+
 import httpx
 import pytest
 
@@ -116,6 +118,31 @@ def test_validate_checks_one_roster_and_lists_all_missing_models(monkeypatch):
     assert len(checked) == 1
     assert manager.validate(["present"]) == {"present": "loaded"}
     assert len(checked) == 2 and not manager.events
+
+
+def test_a_download_that_does_not_match_its_hash_is_thrown_away(tmp_path, monkeypatch):
+    class Served:
+        status_code, headers = 200, {"content-length": "4"}
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def raise_for_status(self):
+            pass
+
+        def iter_bytes(self, size):
+            yield b"junk"
+
+    monkeypatch.setattr(install.httpx, "stream", lambda *a, **kw: Served())
+    dest = tmp_path / "model.gguf"
+    with pytest.raises(RuntimeError, match="sha256"):
+        install.download("http://test/model.gguf", dest, "0" * 64)
+    assert not dest.exists() and not list(tmp_path.glob("*.part"))   # a rejected file leaves nothing to resume from
+    install.download("http://test/model.gguf", dest, hashlib.sha256(b"junk").hexdigest())
+    assert dest.read_bytes() == b"junk"
 
 
 def test_unbuilt_source_tree_has_no_server(tmp_path):

@@ -24,6 +24,10 @@ eval-*.log
 # eval sources, 70 MB, fetched by `lobes eval`
 eval/data/
 
-# per-item eval records; the tables in eval/REPORT.md are computed from them, the files ship as a release asset
+# per-item eval records; `lobes eval --report` computes the tables from them, the files ship as a release asset
 eval/results/
+
+# the pre-registrations and the run-by-run report of the v1 to v4 rounds; kept locally, not published
+eval/PREREG*.md
+eval/REPORT.md
 docs/img/*.png

@@ -128,17 +128,15 @@ flowchart TD
 
 ### 在 4070 上
 
-这个项目瞄的是 8 GB 的 RTX 4070 Laptop。两条臂在那上面各跑满 250 道、单请求不并发，用的是更早那套题：Lobes 195，裸 9B 199，McNemar 分不出高下（p = 0.683）。典型一题 12.6 秒对 16.7 秒，250 道里有 169 道 Lobes 更快。它多写约 11% 的 token，但吐字速度是 53.9 tok/s 对 37.9：4B 解码 61.1 tok/s，9B 只有 40.6。
+这个项目瞄的是 8 GB 的 RTX 4070 Laptop，接力在这张卡上跑得很顺。单请求不并发跑，典型一题 12.6 秒，同一批题裸 9B 是 16.7 秒。吐字速度 53.9 tok/s 对 37.9：4B 解码 61.1 tok/s，9B 只有 40.6。250 次请求里只有 8 次需要换模型进出，其余都是要用的模型已经在显存里。
 
-裸 9B 在这张卡上装得下：实测 5,187 MB，预算 6,800 MB，全程常驻不换模。以上没有一条是显存论据。
-
-更早几轮跑的是另一套运行时，那一版会取多个 reasoning 样本再拿生成的程序去核。它的逐题分析、偏离记录和 witness 统计仍在 [`eval/REPORT.md`](eval/REPORT.md)，每一轮规则都在跑之前写下来：[`eval/PREREG.md`](eval/PREREG.md)、[`eval/PREREG-v3.md`](eval/PREREG-v3.md)、[`eval/PREREG-v4.md`](eval/PREREG-v4.md)。那些数字按当时测到的样子留着，描述的不是上面这条接力。
+裸 9B 在这张卡上也装得下：实测 5,187 MB，预算 6,800 MB，全程常驻不换模。以上没有一条是显存论据。
 
 ## 结论
 
 接力对得起它里面那个模型。400 道逐题配对，裸 4B 错而它对的有 60 道，反过来 30 道，p = 0.002，而且四个题库里有三个它更快。这是这个仓库要论证的事，也是唯一一个对照组和它共用求解叶的结论。
 
-对裸 9B 是打平，43 比 35，p = 0.428。9B 在同一张 8 GB 卡上装得下，所以没有显存这条论据可讲。4070 那轮跑出来的是速度：典型一题 12.6 秒对 16.7 秒，分数 McNemar 分不出高下。
+对裸 9B 是打平，43 比 35，p = 0.428。9B 在同一张 8 GB 卡上装得下，所以没有显存这条论据可讲。4070 那边多出来的是速度：典型一题 12.6 秒，裸 9B 是 16.7 秒。
 
 四个题库涨得并不一样。GPQA 考的是模型记得什么，每题只调约两次工具，接力在那里只多 2 道。MBPP+ 会吐出大量工具结果，接力在那里多 13 道，预填只读了一半。第二个模型值钱的地方，是它替第一个留住了那些本来要一路背在对话里的工具结果。
 
@@ -162,12 +160,16 @@ lobes ask --image shot.png "what is on this screen"
 lobes api
 ```
 
-`lobes api` 会在 8090 端口提供 OpenAI 兼容的 `/v1/chat/completions`。模型名填 `lobes-v1` 时，路由模型把每个请求交给一个专家模型；思考过程按 `reasoning_content` 流式输出，请求里带了 `tools` 时，工具调用交回客户端去跑。`lobes models` 可以看当前模型状态。`pip install -e .[dev,eval]` 安装测试 / 评测依赖；`.[ocr]` 会加上 RapidOCR，作为第二个图片读取器。
+`lobes api` 会在 8090 端口提供 OpenAI 兼容的 `/v1/chat/completions`、`/v1/responses` 和 `/v1/models`。模型名决定用哪个 profile：`lobes/specialists` 是默认那条接力，`lobes-v1` 是更早那一版，路由模型把每个请求交给一个专家模型。思考过程按 `reasoning_content` 流式输出，请求里带了 `tools` 时，工具调用交回客户端去跑。`lobes models` 可以看当前模型状态。`pip install -e .[dev,eval]` 安装测试 / 评测依赖；`.[ocr]` 会加上 RapidOCR，作为第二个图片读取器。
 
 > [!WARNING]
-> Lobes 可以执行模型生成的 Python 和 shell 命令。现在的 runner **没有 sandbox**，Python 和 shell 会继承当前用户权限。对输入不放心时，请放进容器或一次性环境里运行。
+> Lobes 可以执行模型生成的 Python 和 shell 命令。runner **没有 sandbox**。用 root 启动时它会先降到 `nobody` 再跑，这挡得住它动你自己的文件；但 `nobody` 照样能上网，也能读任何 world-readable 的东西。用你自己的账号启动，它就有你全部的权限。对输入不放心时，请放进容器或一次性环境里运行。
+>
+> `lobes api` 没有任何鉴权。它监听 127.0.0.1，也应该一直留在那里：`--host 0.0.0.0` 等于把 python 和 shell 工具摆到所有能连上这个端口的人面前。
 
 文件工具限制在本次 run 的工作目录里，但 Python 和 shell 不受这个限制。工具执行有 10 秒超时。
+
+`lobes install` 会拿 `lobes.yaml` 里的 `sha256` 校验每个模型文件，对不上就删掉，所以 `HF_ENDPOINT` 指到镜像也不必信任那个镜像。
 
 ## 复现实验
 
@@ -201,7 +203,8 @@ GitHub Actions 会在每次 push 和 pull request 时运行单元测试，以及
 - 并发评测需要足够显存让需要的模型常驻；
 - SimpleQA 这种事实回忆还是弱；
 - Python / shell 没有 sandbox；
-- 生成的源码直接返回，没有运行或测试。
+- 生成的源码直接返回，没有运行或测试；
+- 没有任何测试对着真的 llama-server 跑过，模型调用在测试里都是替身。
 
 ## 仓库结构
 
@@ -344,4 +347,8 @@ Harness 每轮会把工作区和策略快照当一条 user message 发过来。L
 
 每次请求的完整过程写在 `runs/<task_id>/trace.jsonl`，一行一步，工具的原始输出另存成 json。答得不对的时候先翻这个文件。
 
-MIT License.
+## 许可
+
+仓库里的代码是 MIT。
+
+模型各有各的条款。默认 profile 里的 classifier `brick-2-max` 是 CC BY-NC 4.0，所以默认配置照原样不能商用；换掉那个槽在 `lobes.yaml` 里是一行的事。`v1` profile 里的 `nemotron-3-nano-4b` 用的是 NVIDIA open model license。其余六个都是 Apache 2.0。

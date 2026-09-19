@@ -1,4 +1,5 @@
 """Download llama.cpp and the GGUFs a profile needs, then write the router preset file."""
+import hashlib
 import os
 import subprocess
 import sys
@@ -9,7 +10,16 @@ import httpx
 from rich.progress import BarColumn, DownloadColumn, Progress, TextColumn, TransferSpeedColumn
 
 
-def download(url, dest: Path):
+def sha256_of(path: Path):
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for block in iter(lambda: f.read(1 << 22), b""):
+            h.update(block)
+    return h.hexdigest()
+
+
+def download(url, dest: Path, sha256=None):
+    """sha256 is what makes the source replaceable: HF_ENDPOINT can point anywhere, the bytes still have to match."""
     if dest.exists():
         return
     dest.parent.mkdir(parents=True, exist_ok=True)
@@ -17,18 +27,22 @@ def download(url, dest: Path):
     have = part.stat().st_size if part.exists() else 0
     headers = {"Range": f"bytes={have}-"} if have else {}
     with httpx.stream("GET", url, headers=headers, follow_redirects=True, timeout=60) as r:
-        if r.status_code == 416:            # .part is already the whole file
-            part.rename(dest)
-            return
-        r.raise_for_status()
-        resumed = r.status_code == 206
-        total = int(r.headers.get("content-length", 0)) + (have if resumed else 0)
-        cols = [TextColumn("{task.description}"), BarColumn(), DownloadColumn(), TransferSpeedColumn()]
-        with open(part, "ab" if resumed else "wb") as f, Progress(*cols) as bar:
-            t = bar.add_task(dest.name, total=total or None, completed=have if resumed else 0)
-            for chunk in r.iter_bytes(1 << 20):
-                f.write(chunk)
-                bar.update(t, advance=len(chunk))
+        if r.status_code != 416:            # 416 means .part is already the whole file
+            r.raise_for_status()
+            resumed = r.status_code == 206
+            total = int(r.headers.get("content-length", 0)) + (have if resumed else 0)
+            cols = [TextColumn("{task.description}"), BarColumn(), DownloadColumn(), TransferSpeedColumn()]
+            with open(part, "ab" if resumed else "wb") as f, Progress(*cols) as bar:
+                t = bar.add_task(dest.name, total=total or None, completed=have if resumed else 0)
+                for chunk in r.iter_bytes(1 << 20):
+                    f.write(chunk)
+                    bar.update(t, advance=len(chunk))
+    if sha256:
+        got = sha256_of(part)
+        if got != sha256:
+            part.unlink()
+            raise RuntimeError(f"{dest.name} came back as sha256 {got}, not the {sha256} in lobes.yaml. "
+                               f"Check where it was downloaded from before trying again.")
     part.rename(dest)
 
 
@@ -88,9 +102,9 @@ def install_models(cfg, root: Path, names):
     hf = os.environ.get("HF_ENDPOINT", "https://huggingface.co").rstrip("/")
     for n in names:
         m = cfg["models"][n]
-        download(f"{hf}/{m['repo']}/resolve/main/{m['file']}", root / "models" / m["file"])
+        download(f"{hf}/{m['repo']}/resolve/main/{m['file']}", root / "models" / m["file"], m.get("sha256"))
         if m.get("mmproj"):
-            download(f"{hf}/{m['repo']}/resolve/main/{m['mmproj']}", mmproj_path(root, m))
+            download(f"{hf}/{m['repo']}/resolve/main/{m['mmproj']}", mmproj_path(root, m), m.get("mmproj_sha256"))
 
 
 def write_presets(cfg, root: Path):

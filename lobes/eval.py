@@ -1,5 +1,6 @@
-"""lobes eval: the comparison pre-registered in eval/PREREG.md. One JSONL line per item, resumable."""
+"""lobes eval: the suites, judges and conditions the comparison runs on. One JSONL line per item, resumable."""
 import json
+import os
 import random
 import re
 import shutil
@@ -18,7 +19,7 @@ from . import config, providers
 from .models import ModelManager
 from .runner import run
 
-# Preserve the registered judges independently of the runtime's witness checks.
+# The judges below were fixed before the runs; the runtime never grades itself.
 NUM = re.compile(r"-?\d[\d,]*(?:\.\d+)?")
 
 
@@ -48,9 +49,9 @@ def same(a, b):
 DATA = config.ROOT / "eval" / "data"
 RESULTS = config.ROOT / "eval" / "results"
 SHUFFLE_SEED = 20260914
-# v1/v2 ran gsm8k 30, tools 20, ocrbench 20, multistep 10 (PREREG, the cut rule); v3 and then v4 enlarged them.
+# v1/v2 ran gsm8k 30, tools 20, ocrbench 20, multistep 10, the cut rule of that round; v3 and v4 enlarged them.
 # the first items of an enlarged suite are the ones that ran before, the shuffle seed did not change.
-# the last 30 of each (tools-50 up, multi-40 up) are the harder v4 halves, reported apart in PREREG-v4.
+# the last 30 of each (tools-50 up, multi-40 up) are the harder v4 halves, reported apart from the older ones.
 N = {"gsm8k": 200, "humaneval": 30, "tools": 60, "simpleqa": 30, "ocrbench": 50, "multistep": 60, "aime": 30,
      # the suites above saturate: multistep 95%, humaneval 90%, so a paired test has almost nothing to work with.
      # these are the sets other models report. gpqa and humanevalplus run whole, which is how they are published.
@@ -67,7 +68,7 @@ def jsonl(path):
     return [json.loads(l) for l in path.read_text(encoding="utf-8").split("\n") if l.strip()]
 
 
-CONDITIONS = {                # cfg overrides on top of the profile; see PREREG for what each one is
+CONDITIONS = {                # cfg overrides on top of the profile, one per arm of the comparison
     "R":  dict(profile="single-9b", raw=True),      # the 9B as shipped: one chat call, no lobes, no tools
     "T":  dict(profile="bare-9b"),                  # the 9B thinking at the same level with every tool, no other lobe
     "A":  dict(profile="single-9b"),
@@ -248,7 +249,7 @@ def load_suite(name):
 
 
 def judge(suite, item, answer):
-    """-> (correct, abstained). Judges are fixed in PREREG."""
+    """-> (correct, abstained). The judges do not change between runs."""
     answer = answer or ""
     if suite in ("gsm8k", "aime"):
         return same(answer, item["gold"]), False
@@ -289,7 +290,7 @@ def judge(suite, item, answer):
         return norm(item["gold"]) in norm(answer), bool(ABSTAIN.search(answer))
     if suite == "ocrbench":
         return any(norm(g) in norm(answer) for g in item["gold"]), False
-    if suite == "multistep":   # a number counts wherever it is in the answer (PREREG-v3): the 9B writes "1,234"
+    if suite == "multistep":   # a number counts wherever it is in the answer: the 9B writes "1,234"
         return all(any(same(n, x) for n in nums(answer)) if re.fullmatch(r"-?[\d.]+", x) else norm(x) in norm(answer)
                    for x in item["answers"]), False
     raise KeyError(suite)
@@ -398,6 +399,14 @@ def main(cfg, conditions, seeds, quick=False, suites=None, tag="", workers=1, id
     for cond in conditions:
         for seed in seeds:
             out = results / f"{'quick-' if quick else ''}{cond}-s{seed}.jsonl"
+            # two runs into one tag both read `done` as empty and each wrote the whole suite, so the file
+            # is claimed before anything is read.
+            running = out.with_suffix(".running")
+            try:
+                os.close(os.open(running, os.O_CREAT | os.O_EXCL | os.O_WRONLY))
+            except FileExistsError:
+                raise SystemExit(f"{running} is there: another run is writing {out.name}, or one died mid-run. "
+                                 f"Check the file, then delete the marker to carry on.") from None
             done = set()
             if out.exists():
                 done = {(r["suite"], r["id"]) for r in jsonl(out)}
@@ -413,16 +422,30 @@ def main(cfg, conditions, seeds, quick=False, suites=None, tag="", workers=1, id
                           f"{rec.get('tokens', {}).get('total_tokens', 0)} tok {rec.get('answer', rec.get('error', ''))[:60]!r}", flush=True)
 
             # workers > 1 only where every model stays loaded: each task has its own swap manager
-            with ThreadPoolExecutor(workers) as pool:
-                list(pool.map(lambda si: one(*si), todo))
+            try:
+                with ThreadPoolExecutor(workers) as pool:
+                    list(pool.map(lambda si: one(*si), todo))
+            finally:
+                running.unlink(missing_ok=True)
 
 
 def report(quick=False, tag=""):
-    """Markdown tables from eval/results; the narrative in REPORT.md is written by hand."""
+    """Markdown tables from eval/results; any narrative around them is written by hand."""
     recs = []
-    for p in sorted((RESULTS / tag).glob(f"{'quick-' if quick else ''}[A-Z]*-s*.jsonl")):
+    for p in sorted((RESULTS / tag).glob("*-s*.jsonl")):
+        if p.name.startswith("quick-") != quick:    # a case-insensitive glob cannot tell these apart on windows
+            continue
         recs += jsonl(p)
     recs = [r for r in recs if "error" not in r]
+    seen, once = set(), []
+    for r in recs:                  # an item written twice counts once: the first pass is the record
+        key = (r["cond"], r["seed"], r["suite"], r["id"])
+        if key not in seen:
+            seen.add(key)
+            once.append(r)
+    if len(once) != len(recs):
+        print(f"# {len(recs) - len(once)} repeated records ignored, first pass kept", file=sys.stderr)
+    recs = once
     conds = [c for c in CONDITIONS if any(r["cond"] == c for r in recs)]
     out = []
 

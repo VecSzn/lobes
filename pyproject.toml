@@ -1,7 +1,7 @@
 [project]
 name = "lobes"
 version = "0.0.1"
-description = "An experimental local AI runtime built from small specialist models and a deterministic verifier."
+description = "An experimental local AI runtime that relays a request through five small specialist models."
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
@@ -33,3 +33,12 @@ include = ["lobes*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]      # on linux bin/ holds the llama.cpp source tree, which has its own tests
+
+[tool.ruff]
+line-length = 155
+extend-exclude = ["lobes/hard", "eval/data", "bin"]   # graders copied from their authors, and downloaded suites
+
+[tool.ruff.lint]
+# the rules that catch a bug rather than a habit: undefined and unused names, mutable defaults,
+# a return inside finally, except Exception with nothing raised from it
+select = ["F", "E9", "B002", "B006", "B012", "B017", "B904"]

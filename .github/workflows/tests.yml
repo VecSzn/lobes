@@ -4,12 +4,29 @@ on: [push, pull_request]
 
 jobs:
   pytest:
+    # windows is the machine this was built on and 3.11 is the floor in pyproject, so both are tested
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python-version: ["3.11", "3.12"]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - run: pip install -e .[dev,eval]
+      - run: pytest -q
+      - run: python -m lobes.tools
+      - run: python -m lobes.eval
+
+  ruff:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install -e .[dev,eval]
-      - run: pytest -q
-      - run: python -m lobes.tools && python -m lobes.eval
+      - run: pip install ruff
+      - run: ruff check

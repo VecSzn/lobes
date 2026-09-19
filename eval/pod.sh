@@ -1,4 +1,8 @@
 #!/bin/sh -e
+# The record of how the v1 to v4 runs were made, kept so those numbers can be traced back to the commands.
+# It is not meant to be run again as it stands: it checks out tags and branches older than this tree, its second
+# sed would now add a duplicate ctx line, and the exp.py it mentions was deleted with the witness machinery.
+#
 # One rented GPU box (RunPod pytorch template, ubuntu 24.04, cuda 12.8), repo already at /workspace/lobes.
 # Builds llama-server, pulls every model, then runs the v1 tag and the v2 branch into separate result dirs, and R from main.
 cd /workspace/lobes
@@ -32,7 +36,7 @@ lobes eval --conditions D --seeds 0 --effort high --tag 5090-v2-high > eval-v2-h
 # R actually ran on a second box set up by the lines above `git stash` (REPORT, deviation 9).
 git stash -q && git checkout -q main && git stash pop -q
 lobes eval --conditions R --tag 5090-v2 > eval-r.log 2>&1      # the 9B alone; same dir so one report shows it next to A-E
-# v3 (PREREG-v3): the enlarged suites, four items in flight everywhere (REPORT, deviation 11). The 9B alone and the
+# v3: the enlarged suites, four items in flight everywhere. The 9B alone and the
 # second version at medium on box 1, v3 medium then high on box 2. The second-version line ran on the pre-v3 runtime
 # with the enlarged suites added; that tree is not a commit of the rewritten history (it is branch v2-fix before its
 # intake fixes), the results are in eval/results/5090-pre-v3.
@@ -73,7 +77,7 @@ git checkout -q main
 lobes eval --conditions D --seeds 0 --workers 4 --tag 5090-v3-witness > eval-v3-witness.log 2>&1                      # box 1
 lobes eval --conditions D --seeds 0 --workers 4 --effort high --tag 5090-v3-witness-high > eval-v3-witness-high.log 2>&1   # box 2
 lobes eval --conditions D --seeds 0 --workers 4 --tag 5090-v3-witness-2 > eval-v3-witness-2.log 2>&1                  # box 1, after the medium run
-# 09-15 night, PREREG-v4: tools and multistep are 60 items each now, AIME 2025 is in and SimpleQA is not run again.
+# 09-15 night, v4: tools and multistep are 60 items each now, AIME 2025 is in and SimpleQA is not run again.
 # The AIME pilot first, on box 1, to see whether the suite is floored before freezing it (16 of 30, so it is in).
 lobes eval --conditions D --seeds 0 --workers 4 --suites aime --tag 5090-v4-aime-pilot > eval-v4-aime-pilot.log 2>&1   # box 1
 # Then the four v4 runs. Only the 90 items v4 adds are run: gsm8k, humaneval, ocrbench and the old halves of tools

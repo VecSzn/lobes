@@ -39,7 +39,8 @@ def ends(text, head=1200, tail=400):
 
 def intake(ctx, state):
     # a client's tool step continues the request that made the call, even after the client compacted that request away
-    hit = _seen.get((ctx.profile, state.step)) if state.continues else None
+    with _lock:     # remember() trims the oldest entries under the same lock
+        hit = _seen.get((ctx.profile, state.step)) if state.continues else None
     if hit:
         state.route, state.topic, state.now, problems, state.checked, state.requirements = hit
         state.problems = list(problems)

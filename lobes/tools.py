@@ -2,8 +2,9 @@
 always under "stdout" or "content".
 
 There is no sandbox. python and shell run whatever the model wrote, with a 10 s timeout; only the file tools are
-confined, to the work dir. Running as root they drop to an unprivileged user first, so a machine-wide action fails;
-running as yourself they have everything you have. Run the whole process in a container on a machine you do not trust."""
+confined, to the work dir. Running as root they drop to an unprivileged user first, which keeps them out of your
+files; that user still reaches the network and everything world-readable. Running as yourself they have everything
+you have. Run the whole process in a container on a machine you do not trust."""
 import ast
 import html
 import json
@@ -38,11 +39,11 @@ def _drop():
     return {"user": who.pw_uid, "group": who.pw_gid, "extra_groups": []}
 
 
-def _writable(*paths):
-    """The dropped user still writes where the tool runs."""
+def _writable(drop, *paths):
+    """The dropped user still writes where the tool runs. Hand it the files rather than open them to everyone."""
     for p in paths:
         try:
-            os.chmod(p, 0o777 if Path(p).is_dir() else 0o666)
+            os.chown(p, drop["user"], drop["group"])
         except OSError:
             pass
 
@@ -50,7 +51,7 @@ def _writable(*paths):
 def _run(argv, workdir, shell=False):
     drop = _drop()
     if drop:
-        _writable(workdir)
+        _writable(drop, workdir)
     try:
         p = subprocess.run(argv, cwd=workdir, shell=shell, capture_output=True, text=True, timeout=TIMEOUT,
                            encoding="utf-8", errors="replace", **drop)
@@ -141,7 +142,7 @@ class _Interpreter:
         self.err.touch()
         drop = _drop()
         if drop:
-            _writable(self.dir, self.out, self.err, workdir)
+            _writable(drop, self.dir, self.out, self.err, workdir)
         self.proc = subprocess.Popen([sys.executable, "-I", "-u", "-c", _SERVE, str(self.out), str(self.err)], cwd=workdir,
                                      stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, encoding="utf-8", **drop)
         self.done = queue.Queue()

@@ -2,7 +2,7 @@
 
 中文 | [English](ARCHITECTURE.en.md)
 
-这篇写现在的运行时：五个槽各干什么、一次请求怎么走、上限怎么算、代码怎么组织。成绩在 [`../eval/REPORT.md`](../eval/REPORT.md) 和 README。
+这篇写现在的运行时：五个槽各干什么、一次请求怎么走、上限怎么算、代码怎么组织。成绩在 README。
 
 一条链上串几个小模型，错误会叠加。拆开只在两种情况下划算：某个模块拿到的是别人没有的信息（图片、工具结果），或者干的活性质不同（做出来 vs 读一遍）。同一档小模型换个提示词再串一遍，这两条都不满足。
 
@@ -28,7 +28,7 @@
 | motor | 工具手：按 reasoning 说的去调工具，再从结果里作答 | granite-h-micro | GPU 换入 |
 | language | 拿写好的草稿对着请求读一遍，说哪里不对 | gemma4-e2b | GPU 换入 |
 
-`v1` profile 另外填 `router` 槽和 chat / code / math / documents / knowledge 几个专家槽：router 挑一个，`Ctx.slot` 就把 reasoning 指向那个槽。`check` 不是独立的槽，它是同一个 reasoning 模型读自己的草稿。
+`v1` profile 另外填 `router` 槽和 code / math / knowledge 三个专家槽：router 只在填了模型的槽里挑，`Ctx.slot` 就把 reasoning 指向它挑中的那个。`check` 不是独立的槽，它是同一个 reasoning 模型读自己的草稿。
 
 评测用的 profile 里 `none` 表示槽空着，`passthrough` 表示这一步不过模型。
 
@@ -157,7 +157,7 @@ Lobes/
            lobe/  executive.py perception.py reasoning.py motor.py language.py
            hard/  官方判分器：ifeval、math500、bfcl、livecodebench、repo
   eval/    suites/（题库 jsonl，make.py 出 tools 和 multistep 的题）  data/（题库和 repo 快照）
-           PREREG*.md  REPORT.md  plot.py（README 的图）  pod.sh（租的 5090 怎么跑）
+           plot.py（README 的图）  pod.sh（租的 5090 怎么跑）
   tests/   test_lobes.py  test_provider_limits.py  test_responses.py
   runs/  models/  eval/results/      不进 git
 ```
@@ -170,7 +170,7 @@ Lobes/
 
 判分全是代码，没有模型裁判：GSM8K 比最后一个数，HumanEval 和 MBPP+ 跑官方测试，ifeval、math500、bfcl、livecodebench 用各自上游的判分器（`lobes/hard/`，官方代码原样 vendored）。每道题记对错、弃答、token、秒、换模次数、显存峰值、调用数、走的哪条路线、撞没撞上限。
 
-假设和阈值在跑之前写死在 `eval/PREREG*.md`，文件冻结，偏离记在 REPORT。那几轮跑的是更早的运行时，数字按当时测到的样子留着。
+每一轮的假设和阈值都在跑之前写下来，事后偏离了多少也照记。更早那几轮跑的是更早的运行时，数字按当时测到的样子留着。
 
 ## 别人做过的
 

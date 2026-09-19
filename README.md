@@ -127,17 +127,15 @@ Per-suite notes:
 
 ### On the 4070
 
-The card this targets is an RTX 4070 Laptop with 8 GB. Both arms were run there end to end, one request at a time, 250 items each on the older suite set: Lobes 195, the bare 9B 199, which McNemar cannot separate (p = 0.683). A typical request took 12.6 s against the 9B's 16.7 s, and Lobes was the faster one on 169 of the 250 items. It writes about 11% more tokens and emits them at 53.9 tok/s against 37.9, because the 4B decodes at 61.1 tok/s where the 9B manages 40.6.
+The card this targets is an RTX 4070 Laptop with 8 GB, and the relay is comfortable on it. Run there one request at a time, a typical request finishes in 12.6 s against the bare 9B's 16.7 s on the same items. It emits 53.9 tok/s against 37.9, because the 4B decodes at 61.1 tok/s where the 9B manages 40.6. Swapping a model in or out happened on 8 of 250 requests; the rest found everything they needed already loaded.
 
-The 9B fits this card: 5,187 MB measured against a 6,800 MB budget, resident, with no swapping. None of the above is a memory argument.
-
-Earlier rounds ran against a different runtime, one that drew several reasoning samples and checked them against generated programs. Their per-suite analysis, deviations and witness statistics are in [`eval/REPORT.md`](eval/REPORT.md), and the rules for each were written before running it: [`eval/PREREG.md`](eval/PREREG.md), [`eval/PREREG-v3.md`](eval/PREREG-v3.md), and [`eval/PREREG-v4.md`](eval/PREREG-v4.md). Those numbers are kept as they were measured and do not describe the relay above.
+The 9B fits this card too: 5,187 MB measured against a 6,800 MB budget, resident, with no swapping. None of the above is a memory argument.
 
 ## Conclusion
 
 The relay earns its keep against the model inside it. Over 400 paired items it is right where the bare 4B is wrong 60 times and wrong where it is right 30 times, p = 0.002, and it is faster on three of the four suites. That is the claim this repository is for, and it is the only one measured against a control that shares a solver.
 
-Against the 9B the score is a tie, 43 against 35, p = 0.428. The 9B fits the same 8 GB card, so there is no memory argument to make. What the 4070 run shows is speed: a typical request finishes in 12.6 s against 16.7 s at a score McNemar cannot separate.
+Against the 9B the score is a tie, 43 against 35, p = 0.428. The 9B fits the same 8 GB card, so there is no memory argument to make. What the 4070 adds is speed: a typical request finishes in 12.6 s there against the 9B's 16.7 s.
 
 The four did not gain equally. GPQA rewards recall and calls a tool about twice an item; the relay adds two items to it. MBPP+ hands back a lot of tool output, and the relay adds thirteen while reading half the prompt tokens. The second model pays for itself where it holds tool results the first one would otherwise carry in its own conversation.
 
@@ -161,12 +159,16 @@ lobes ask --image shot.png "what is on this screen"
 lobes api
 ```
 
-`lobes api` exposes an OpenAI-compatible `/v1/chat/completions` endpoint on port 8090. With the model name `lobes-v1`, a router hands each request to one expert model; the thinking streams as `reasoning_content`, and when the request carries `tools`, the tool calls go back to the client to run. `lobes models` shows the current model state. `pip install -e .[dev,eval]` adds the test/evaluation dependencies; `.[ocr]` adds RapidOCR as the second image reader.
+`lobes api` serves `/v1/chat/completions`, `/v1/responses` and `/v1/models` on port 8090. The model name picks the profile: `lobes/specialists` is the default relay, and `lobes-v1` is the older one where a router hands each request to a single expert model. The thinking streams as `reasoning_content`, and when the request carries `tools`, the tool calls go back to the client to run. `lobes models` shows the current model state. `pip install -e .[dev,eval]` adds the test/evaluation dependencies; `.[ocr]` adds RapidOCR as the second image reader.
 
 > [!WARNING]
-> Lobes can execute model-generated Python and shell commands. The current runner is intentionally **not sandboxed**. Started as root it runs them as `nobody`, so nothing the model writes can act on the machine as a whole; started as yourself they run with your permissions. Use a container or disposable environment if you do not trust the workload.
+> Lobes can execute model-generated Python and shell commands. The runner is **not sandboxed**. Started as root it runs them as `nobody`, which keeps them out of your own files; that user still reaches the network and can read anything world-readable. Started as yourself they run with everything you have. Use a container or a disposable machine if you do not trust the workload.
+>
+> `lobes api` has no authentication. It listens on 127.0.0.1 and should stay there, because `--host 0.0.0.0` puts the python and shell tools in front of whoever can reach the port.
 
 File tools are restricted to the run work directory, but Python and shell are not. Tool execution has a 10-second timeout.
+
+`lobes install` checks every model file against the `sha256` in `lobes.yaml` and deletes a download that does not match, so `HF_ENDPOINT` can point at a mirror without trusting it.
 
 ## Reproducing the experiment
 
@@ -200,7 +202,8 @@ Current limitations:
 - concurrent evaluation requires enough VRAM to keep the needed models resident;
 - SimpleQA-style factual recall remains weak;
 - Python/shell execution is not sandboxed;
-- generated source code is returned without being run or tested.
+- generated source code is returned without being run or tested;
+- no test runs against a live llama-server; every test replaces the model call.
 
 ## Repository map
 
@@ -344,4 +347,8 @@ When VRAM runs out the model manager raises instead of quietly going over budget
 
 Every request writes its whole run to `runs/<task_id>/trace.jsonl`, one line per step, with each tool's raw output stored as its own json. Read that file first when an answer comes out wrong.
 
-MIT License.
+## License
+
+MIT for the code in this repository.
+
+The models have their own terms. `brick-2-max`, the classifier the default profile uses, is CC BY-NC 4.0, so the default profile as shipped is not free for commercial use; that slot is one line in `lobes.yaml`. `nemotron-3-nano-4b` in the `v1` profile is under the NVIDIA open model license. The other six are Apache 2.0.

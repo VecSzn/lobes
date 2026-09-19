@@ -1,7 +1,7 @@
 """Writes tools.jsonl and multistep.jsonl. Every expected value is computed here, never typed in.
 python eval/suites/make.py
 Two splits per suite: v3 items keep their ids and values untouched, v4 items are the harder ones
-added for PREREG-v4."""
+added in the round after."""
 import base64
 import datetime as dt
 import hashlib
@@ -367,7 +367,7 @@ WORDS = ["listen", "silent", "enlist", "google", "banana", "inlets", "elbow", "b
 
 
 def tools_v4():
-    """30 harder one-value items (PREREG-v4). Nothing is typed in; every value comes from the line above it."""
+    """30 harder one-value items, the v4 half. Nothing is typed in; every value comes from the line above it."""
     r = []
     r.append(("modinv", "what is the modular inverse of 987654321 modulo 1000000007, given as the integer "
               "between 0 and 1000000006", pow(987654321, -1, 10 ** 9 + 7)))
@@ -449,7 +449,7 @@ def tools_v4():
 
 
 def multistep_v4():
-    """30 chains of 4 to 6 steps, three values each (PREREG-v4)."""
+    """30 chains of 4 to 6 steps, three values each, the v4 half."""
     r = []
     ps = primes(2000)
     gaps = [ps[i + 1] - ps[i] for i in range(len(ps) - 1)]
