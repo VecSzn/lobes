@@ -16,10 +16,10 @@ Lobes solves with Qwen3.5-4B, so the comparison that matters is against that sam
 
 | 100 items per suite | bare Qwen3.5-4B | Lobes, medium | bare Qwen3.5-9B |
 |---|---:|---:|---:|
-| GSM8K | 66 | 71 | 69 |
+| GSM8K | 66 | **71** | 69 |
 | IFEval | 73 | **83** | 77 |
 | MBPP+ | 66 | **79** | 77 |
-| GPQA diamond | 67 | 69 | 71 |
+| GPQA diamond | 67 | 69 | **71** |
 | **400 together** | 272 | **302** | 294 |
 
 Paired over all 400 items, Lobes is right where its own solver is wrong 60 times and wrong where it is right 30 times, a net 30 items at McNemar p = 0.002. It is also faster than that solver on three of the four suites. Against the 9B the score is a tie, 43 against 35 at p = 0.428: a 4B relay lands level with a model twice its size.
@@ -108,13 +108,15 @@ Every column uses seed 0, the same 100 items per suite, and four requests in fli
 
 ![tokens and seconds per item, lower is better](docs/img/cost.svg)
 
-| suite | bare 4B | Lobes | bare 9B | median s, 4B | Lobes | 9B | prompt / item, 4B | Lobes | 9B |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| GSM8K | 66 | 71 | 69 | 11.6 | 7.6 | 5.7 | 1,900 | 1,940 | 1,810 |
-| IFEval | 73 | **83** | 77 | 10.1 | 7.4 | 4.7 | 2,060 | 2,250 | 2,110 |
-| MBPP+ | 66 | **79** | 77 | 9.4 | 7.9 | 4.1 | 10,370 | 5,620 | 900 |
-| GPQA diamond | 67 | 69 | 71 | 57.6 | 59.6 | 42.2 | 11,170 | 7,250 | 7,680 |
-| **400 together** | **272** | **302** | **294** | | | | | | |
+| Benchmark | bare 4B | Lobes | bare 9B |
+|---|---:|---:|---:|
+| GSM8K | 66 | **71** | 69 |
+| IFEval | 73 | **83** | 77 |
+| MBPP+ | 66 | **79** | 77 |
+| GPQA diamond | 67 | 69 | **71** |
+| **400 together** | 272 | **302** | 294 |
+
+Best per row in bold. Seconds and tokens per item are in the second chart above.
 
 Paired against its own solver, suite by suite: MBPP+ +13 (p = 0.004), IFEval +10 (p = 0.087), GSM8K +5 (p = 0.424), GPQA +2 (p = 0.815). Only MBPP+ clears significance alone. The case rests on the 400 items together, where 60 go one way and 30 the other, p = 0.002.
 
@@ -125,19 +127,51 @@ Per-suite notes:
 - The 9B prefills 900 tokens an item on MBPP+ against the 4B's 10,370, because it mostly writes the answer instead of reaching for tools. That is how it reaches 77 there while the bare 4B gets 66.
 - Lobes is faster than its own solver on GSM8K, IFEval and MBPP+, and 3% slower on GPQA. It is slower than the 9B on all four here. With one request at a time on the 4070 that reverses; see below.
 
-### On the 4070
+### On the RTX 4070
 
-The card this targets is an RTX 4070 Laptop with 8 GB, and the relay is comfortable on it. Run there one request at a time, a typical request finishes in 12.6 s against the bare 9B's 16.7 s on the same items. It emits 53.9 tok/s against 37.9, because the 4B decodes at 61.1 tok/s where the 9B manages 40.6. Swapping a model in or out happened on 8 of 250 requests; the rest found everything they needed already loaded.
+This is the card the default profile targets. Everything below runs one request at a time, which is what a single user sees.
 
-The 9B fits this card too: 5,187 MB measured against a 6,800 MB budget, resident, with no swapping. None of the above is a memory argument.
+**Environment.** RTX 4070 Laptop, 8 GB, 6,800 MB budget. One request in flight. Seed 0, the same 400 items as the table above.
+
+| Benchmark | bare 4B | Lobes | bare 9B |
+|---|---:|---:|---:|
+| GSM8K | 73 | **79** | 74 |
+| IFEval | 76 | **81** | 71 |
+| MBPP+ | 69 | **81** | 78 |
+| GPQA diamond | 64 | 71 | **74** |
+| **400 together** | 282 | **312** | 297 |
+
+#### Seconds per item, median
+
+| Benchmark | bare 4B | Lobes | bare 9B |
+|---|---:|---:|---:|
+| GSM8K | **9.7** | 13.8 | 13.6 |
+| IFEval | **10.4** | 10.7 | 15.0 |
+| MBPP+ | **10.6** | **10.6** | 11.0 |
+| GPQA diamond | **75.4** | 77.7 | 119.8 |
+
+#### Prompt tokens per item, median
+
+| Benchmark | bare 4B | Lobes | bare 9B |
+|---|---:|---:|---:|
+| GSM8K | 2,040 | **1,542** | 2,016 |
+| IFEval | 810 | 1,153 | **795** |
+| MBPP+ | 3,574 | 2,186 | **824** |
+| GPQA diamond | 8,242 | 5,604 | **4,708** |
+
+Best per row in bold; lower is better in the last two tables. Paired over the 400, the relay is right where the bare 4B is wrong 60 times and wrong where it is right 30 times, p = 0.002, the same split the 5090 gives. Against the 9B it is 47 to 32, p = 0.115. MBPP+ is judged offline from the stored answers, because the in-run judge reads only a return code and cannot tell a failed test from a child that never started.
+
+Loading a model in or out happened on 19 of the relay's 400 requests and cost 65 s in total; the rest found every model already resident. The 9B fits this card too: 5,187 MB against a 6,800 MB budget, resident, with no swapping. None of the above is a memory argument.
 
 ## Conclusion
 
-The relay earns its keep against the model inside it. Over 400 paired items it is right where the bare 4B is wrong 60 times and wrong where it is right 30 times, p = 0.002, and it is faster on three of the four suites. That is the claim this repository is for, and it is the only one measured against a control that shares a solver.
+The relay earns its keep against the model inside it. Over 400 paired items on the 5090 it is right where the bare 4B is wrong 60 times and wrong where it is right 30 times, p = 0.002. The 4070 run, on different hardware with one request at a time, lands on the same split: 60 and 30, p = 0.002. That is the claim this repository is for, and it is the only one here measured against a control that shares a solver.
 
-Against the 9B the score is a tie, 43 against 35, p = 0.428. The 9B fits the same 8 GB card, so there is no memory argument to make. What the 4070 adds is speed: a typical request finishes in 12.6 s there against the 9B's 16.7 s.
+It also outscores the 9B. On the 4070 the three arms finish at 312, 297 and 282 out of 400, so a relay whose largest model is that same 4B comes out ahead of one more than twice its size. Paired that is 47 items to 32, p = 0.115: ahead, short of significance. On the 5090 the two tie, 302 against 294.
 
-The four did not gain equally. GPQA rewards recall and calls a tool about twice an item; the relay adds two items to it. MBPP+ hands back a lot of tool output, and the relay adds thirteen while reading half the prompt tokens. The second model pays for itself where it holds tool results the first one would otherwise carry in its own conversation.
+The second model pays for itself where tool output piles up. MBPP+ hands back a lot of it, and on the 4070 the relay scores 81 there against the bare 4B's 69 while reading 2,186 prompt tokens an item against 3,574, because the tool hand keeps the results and passes on a few sentences instead of resending the whole conversation. GPQA is the flat suite and should be: it asks what a model already knows and calls a tool about twice an item, which leaves a relay nothing to divide up.
+
+One request at a time on the 4070, a typical item takes 15.0 s on the relay against the 9B's 16.8 s, and the gap opens where the work is long: 77.7 s against 119.8 s on GPQA. The bare 4B on its own is quicker at 12.0 s, which is what the extra hands cost.
 
 The most useful result for me is still that the system improved when I took "AI" out of it. The verifier was a model and is now gone, the executive became a small CPU classifier, and the review model's rewrite went after it rescued nothing over three runs and broke two answers. Several preregistered ideas failed and were removed.
 
