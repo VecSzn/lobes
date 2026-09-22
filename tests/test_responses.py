@@ -2,8 +2,9 @@ import json
 
 from starlette.testclient import TestClient
 
-from lobes import api, config, runner
+from lobes import api, config, server
 from lobes.providers import BUDGET_MESSAGE as BUDGET
+from lobes.task import TaskState
 
 
 def events(text):
@@ -30,9 +31,9 @@ CODEX = {
 
 def test_codex_request_reaches_the_runner_as_chat_and_calls_come_back_as_items(tmp_path, monkeypatch):
     seen = {}
-    state = runner.TaskState("t", "list the files", [])
+    state = TaskState("t", "list the files", [])
     state.tool_calls = [{"id": "c3", "type": "function", "function": {"name": "mcp__node_repl__js", "arguments": "{}"}}]
-    state.usage = {"prompt_tokens": 900, "completion_tokens": 40}
+    state.spend.usage = {"prompt_tokens": 900, "completion_tokens": 40}
 
     def run(cfg, goal, **kw):
         seen.update(kw, goal=goal, effort=cfg.get("effort"))
@@ -43,7 +44,7 @@ def test_codex_request_reaches_the_runner_as_chat_and_calls_come_back_as_items(t
         state.answer = "Running js."
         return state
     monkeypatch.setattr(api, "run", run)
-    with TestClient(api.make_app(dict(config.load(), _root=tmp_path, effort="medium"))) as client:
+    with TestClient(server.make_app(dict(config.load(), _root=tmp_path, effort="medium"))) as client:
         out = events(client.post("/v1/responses", json=CODEX).text)
     msgs = seen["messages"]
     assert seen["goal"] == "list the files" and seen["effort"] == "medium" and seen["cancel"].is_set()
@@ -69,7 +70,7 @@ def test_codex_request_reaches_the_runner_as_chat_and_calls_come_back_as_items(t
 
 
 def test_a_reviewed_answer_goes_out_as_a_message_once(tmp_path, monkeypatch):
-    state = runner.TaskState("t", "hi", [])
+    state = TaskState("t", "hi", [])
 
     def run(cfg, goal, on_delta=None, **kw):
         if on_delta:
@@ -79,7 +80,7 @@ def test_a_reviewed_answer_goes_out_as_a_message_once(tmp_path, monkeypatch):
         state.answer = "Hello. " * 300
         return state
     monkeypatch.setattr(api, "run", run)
-    with TestClient(api.make_app(dict(config.load(), _root=tmp_path))) as client:
+    with TestClient(server.make_app(dict(config.load(), _root=tmp_path))) as client:
         out = events(client.post("/v1/responses", json={"model": "lobes-v1", "stream": True, "input": "hi"}).text)
         plain = client.post("/v1/responses", json={"model": "lobes-v1", "input": "hi"}).json()
     done = [e["item"] for e in out if e["type"] == "response.output_item.done"]
@@ -92,15 +93,15 @@ def test_a_reviewed_answer_goes_out_as_a_message_once(tmp_path, monkeypatch):
 
 def stream(tmp_path, monkeypatch, deltas, draft, answer, body=None, stopped=False):
     """-> the done items of a /v1/responses stream whose run sends these deltas and ends with this draft and answer."""
-    state = runner.TaskState("t", "q", [])
+    state = TaskState("t", "q", [])
 
     def run(cfg, goal, on_delta=None, **kw):
         for kind, text in deltas:
             on_delta(kind, text)
-        state.draft, state.answer, state.stopped = draft, answer, stopped
+        state.work.draft, state.answer, state.stopped = draft, answer, stopped
         return state
     monkeypatch.setattr(api, "run", run)
-    with TestClient(api.make_app(dict(config.load(), _root=tmp_path))) as client:
+    with TestClient(server.make_app(dict(config.load(), _root=tmp_path))) as client:
         out = events(client.post("/v1/responses", json=body or {"model": "lobes-v1", "stream": True, "input": "q"}).text)
     return [(d.get("phase") or d["type"], d["content"][0]["text"] if d["type"] == "message" else d["summary"][0]["text"])
             for d in (e["item"] for e in out if e["type"] == "response.output_item.done")]
@@ -167,9 +168,9 @@ def test_a_turn_whose_only_tool_is_hosted_keeps_the_local_tools():
     from lobes.responses import _tools
     flat, _ = _tools([{"type": "web_search", "external_web_access": False}])   # the client expects us to run this one
     assert flat == []
-    assert runner.TaskState("t", "who won", [], client_tools=flat).client_tools is None
+    assert TaskState("t", "who won", [], client_tools=flat).client_tools is None
     kept = [{"type": "function", "function": {"name": "exec_command"}}]
-    assert runner.TaskState("t", "ls", [], client_tools=kept).client_tools == kept
+    assert TaskState("t", "ls", [], client_tools=kept).client_tools == kept
 
 
 def test_escalation_wording_only_goes_out_with_an_escalation():

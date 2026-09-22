@@ -324,16 +324,17 @@ def run_item(cfg, cond, seed, suite, item, vram, tag=""):
     answer = code_block(st.answer) if suite in CODE else st.answer
     correct, abstained = judge(suite, item, answer)
     lobe_ms = {}
-    for lobe, _, ms, _ in st.calls:
+    for lobe, _, ms, _ in st.spend.calls:
         lobe_ms[lobe] = lobe_ms.get(lobe, 0) + ms
     swap_ms = 0
     for r in jsonl(cfg["_root"] / "runs" / task_id / "trace.jsonl"):
         if r["kind"] == "model":
             swap_ms += r["ms"]
-    rec.update(answer=(answer or "")[:1000], correct=correct, abstained=abstained, route=st.route,
-               tokens=st.usage, ms=st.ms(), lobe_ms=lobe_ms, swaps=st.swaps, swap_ms=swap_ms, vram_peak_mb=vram.peak,
-               calls=len(st.calls), tools=len(st.tool_results), sent_back=len(st.problems), level=st.effort,
-               stuck=bool(st.capped), capped=st.capped)
+    spend = st.spend
+    rec.update(answer=(answer or "")[:1000], correct=correct, abstained=abstained, route=st.turn.route,
+               tokens=spend.usage, ms=spend.ms(), lobe_ms=lobe_ms, swaps=spend.swaps, swap_ms=swap_ms, vram_peak_mb=vram.peak,
+               calls=len(spend.calls), tools=len(st.work.tool_results), sent_back=len(st.turn.problems), level=st.effort,
+               stuck=bool(spend.capped), capped=spend.capped)
     if suite in ("gsm8k", "tools", "aime"):     # lenient twin of the strict judge, reported next to it
         rec["gold_in_answer"] = item.get("gold", item.get("answer")).replace(",", "") in nums(st.answer or "")
     return rec

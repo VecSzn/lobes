@@ -61,25 +61,10 @@ def _run(argv, workdir, shell=False):
     return {"stdout": p.stdout[-MAX_OUT:], "stderr": p.stderr[-MAX_OUT:], "exit": p.returncode}
 
 
-def _unescape(code):
-    """Some models write newlines as a literal backslash-n inside the json string. That one-liner can still compile
-    if a # comment eats the rest, so when there's no real newline the unescaped text is tried first."""
-    fixed = code.replace("\\n", "\n").replace("\\t", "\t").replace('\\"', '"')
-    for c in ((fixed, code) if "\n" not in code else (code, fixed)):
-        try:
-            compile(c, "<tool>", "exec")
-            return c
-        except SyntaxError:
-            pass
-    return code
-
-
 def python(code: str, workdir: Path):
-    code = _unescape(code)
     if "print" not in code:
-        # small models write `17 * 23` and expect the value back, so echo the last expression like a REPL.
-        # find it with the syntax tree (the last line may be just ")"), and in the same run, since running twice
-        # would repeat every write and POST
+        # a script that ends in `17 * 23` gets the value back, like a REPL. the syntax tree finds the last expression
+        # (the last line may be just ")"), and it runs in the same pass, since running twice would repeat every write and POST
         try:
             last = ast.parse(code).body[-1]
         except (SyntaxError, RecursionError, ValueError, IndexError):     # the run shows what is wrong, if anything
@@ -132,8 +117,7 @@ _interpreters = {}      # work dir -> _Interpreter
 
 
 class _Interpreter:
-    """One python process per request, like a notebook: small models import or define something in one call and
-    use it in the next."""
+    """One python process per request, like a notebook: what one call imports or defines, the next can use."""
 
     def __init__(self, workdir):
         self.dir = Path(tempfile.mkdtemp(prefix="lobes-python-"))
@@ -304,6 +288,16 @@ def specs(only=None):
     return [spec(n, doc, props) for n, (_, props, doc) in TOOLS.items() if only is None or n in only]
 
 
+def arguments(call):
+    """The arguments of an openai tool call as a dict, or None when the model wrote something else."""
+    a = (call.get("function") or {}).get("arguments") or "{}"
+    try:
+        a = a if isinstance(a, dict) else json.loads(a)
+    except json.JSONDecodeError:
+        return None
+    return a if isinstance(a, dict) else None
+
+
 def run(name: str, args: dict, workdir: Path):
     if name not in TOOLS:
         return {"stderr": f"no tool named {name}", "exit": 2}
@@ -330,7 +324,6 @@ if __name__ == "__main__":
     assert run("python", {"code": "t = " + " + ".join(["1"] * 400) + "\nt"}, d)["stdout"].strip() == "400"
     assert run("python", {"code": "import math; math.pi  # pi"}, d)["stdout"].strip() == "3.141592653589793"
     assert run("web_fetch", {"url": "http://localhost:PORT/x"}, d)["exit"] == 1
-    assert run("python", {"code": 'x = 6\\ny = 7\\nprint(f\\"{x*y}\\")'}, d)["stdout"].strip() == "42"
     assert run("python", {"code": 'print("a\\nb")'}, d)["stdout"] == "a\nb\n"
     assert run("python", {"code": "import math\ndef f(x):\n    return x * 7"}, d)["stdout"] == ""
     assert run("python", {"code": "f(math.floor(6.5))"}, d)["stdout"].strip() == "42"

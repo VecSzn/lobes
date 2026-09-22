@@ -14,7 +14,7 @@ from starlette.concurrency import run_in_threadpool
 from starlette.responses import JSONResponse, StreamingResponse
 
 from . import api, providers
-from .runner import ALIASES, EFFORT
+from .task import ALIASES, EFFORT
 
 
 def _tools(tools):
@@ -50,8 +50,8 @@ def _parts(content):
 
 
 def _messages(body):
-    """-> chat messages. Every instruction and developer message joins one leading system message: Qwen3.5's template
-    rejects a system message anywhere else. Reasoning the client echoes back is dropped, as in api.py, and so is the
+    """-> chat messages. Every instruction and developer message joins one leading system message: some chat templates
+    reject a system message anywhere else. Reasoning the client echoes back is dropped, as in api.py, and so is the
     thinking this file sent as quoted commentary; other commentary is the assistant's own text."""
     system, msgs = [body["instructions"]] if body.get("instructions") else [], []
     items = body.get("input") or []
@@ -270,12 +270,12 @@ def make_route(cfg, default_profile=None):
             answer, phase = state.answer or "", "commentary" if state.tool_calls else "final_answer"
             if live and live[1] == "reasoning" and answer.strip() and \
                     live[3].strip().removesuffix(providers.BUDGET_MESSAGE.strip()).rstrip() == answer.strip():
-                yield close(answer, phase)      # reasoning.py made the thought the answer: shown once, as the answer
+                yield close(answer, phase)      # Ctx.chat made the thought the answer: shown once, as the answer
                 answer = ""
             if live and live[1] == "reasoning":
                 yield close()
             if live:                # a cap mid-answer leaves no draft, and the text already sent beats the fallback
-                yield close(answer if state.draft is not None and not state.stopped else live[2],
+                yield close(answer if state.work.draft is not None and not state.stopped else live[2],
                             "commentary" if state.stopped else phase)
                 answer = answer if state.stopped else ""     # why the relay stopped comes after the text sent
             if answer:              # a reviewed answer comes at the end: typed out as a streamed one would be, in ~1.5 s

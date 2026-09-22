@@ -1,4 +1,4 @@
-"""lobes api: /v1/chat/completions in front of the runner, so anything that talks to OpenAI can talk to the lobes.
+"""/v1/chat/completions in front of the runner, so anything that talks to OpenAI can talk to the lobes.
 model "lobes/<profile>" picks a profile, "lobes-v1" is the v1 profile. If a request carries tools, calls to them come
 back for the client to run, like with any chat model; without tools the lobes use their own.
 stream=true sends the relay's work as reasoning_content and the answer as content."""
@@ -10,11 +10,8 @@ import time
 import uuid
 
 import httpx
-import uvicorn
-from starlette.applications import Starlette
 from starlette.concurrency import run_in_threadpool
 from starlette.responses import JSONResponse, StreamingResponse
-from starlette.routing import Route
 
 from .runner import request_at, run
 
@@ -70,8 +67,8 @@ def _messages(messages, imgdir):
 def usage(state):
     """prompt_tokens is the conversation as the expert last read it: a client sizes its context from it, and the
     router, classifier and review calls are not in that conversation. Every call's tokens summed go under lobes."""
-    last = state.context or state.usage
-    out = {"prompt_tokens": last.get("prompt_tokens", 0), "completion_tokens": state.usage.get("completion_tokens", 0)}
+    last = state.spend.context or state.spend.usage
+    out = {"prompt_tokens": last.get("prompt_tokens", 0), "completion_tokens": state.spend.usage.get("completion_tokens", 0)}
     out["total_tokens"] = out["prompt_tokens"] + out["completion_tokens"]
     if last.get("prompt_tokens_details"):
         out["prompt_tokens_details"] = last["prompt_tokens_details"]
@@ -93,7 +90,7 @@ def failure(exc):
     return status, {"message": message[:1000], "type": "invalid_request_error" if status < 500 else "server_error", "code": code}
 
 
-def make_app(cfg, default_profile=None):
+def make_route(cfg, default_profile=None):
     imgdir = cfg["_root"] / "runs" / "_api_images"
     imgdir.mkdir(parents=True, exist_ok=True)
 
@@ -111,8 +108,9 @@ def make_app(cfg, default_profile=None):
         rid, created, name = f"chatcmpl-{uuid.uuid4().hex[:12]}", int(time.time()), model or f"lobes/{profile}"
 
         def done(state):
-            extra = {"task_id": state.task_id, "route": state.route, "topic": state.topic, "sent_back": state.problems,
-                     "swaps": state.swaps, "ms": state.ms(), "uncertainties": state.uncertainties, "usage": state.usage}
+            extra = {"task_id": state.task_id, "route": state.turn.route, "topic": state.turn.topic,
+                     "sent_back": state.turn.problems, "swaps": state.spend.swaps, "ms": state.spend.ms(),
+                     "uncertainties": state.uncertainties, "usage": state.spend.usage}
             return usage(state), extra, "tool_calls" if state.tool_calls else "stop"
 
         if not body.get("stream"):
@@ -175,15 +173,4 @@ def make_app(cfg, default_profile=None):
                 cancel.set()        # uvicorn cancels this generator when the client disconnects
         return StreamingResponse(sse(), media_type="text/event-stream")
 
-    async def models(request):
-        ids = list(MODELS) + [f"lobes/{p}" for p in cfg["profiles"]]
-        return JSONResponse({"object": "list", "data": [{"id": i, "object": "model", "owned_by": "lobes"} for i in ids]})
-
-    from .responses import make_route
-    return Starlette(routes=[Route("/v1/chat/completions", completions, methods=["POST"]),
-                             Route("/v1/responses", make_route(cfg, default_profile), methods=["POST"]),
-                             Route("/v1/models", models)])
-
-
-def serve(cfg, host, port, profile=None):
-    uvicorn.run(make_app(cfg, profile), host=host, port=port, log_level="warning")
+    return completions

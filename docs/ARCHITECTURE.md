@@ -49,7 +49,7 @@
 
 ### executive
 
-难度模型是个分类器，提示词只问一句：easy、medium 还是 hard，温度 0，最多 5 个 token。只有回答以 easy 开头才走 simple，其余一律 hard。请求很长时按头 1200 尾 400 截一段送过去（`ends()`），整篇文档在 CPU 上要跑好几秒，而要求通常在两头。
+难度模型是个分类器，提示词只问一句：easy、medium 还是 hard，温度 0，最多 5 个 token。回复由语法限定成这三个词之一（`choices`），以前 1687 次里有 75 次开头不是标签。只有回答 easy 才走 simple，其余一律 hard。请求很长时按头 1200 尾 400 截一段送过去（`ends()`），整篇文档在 CPU 上要跑好几秒，而要求通常在两头。
 
 带图片的请求跳过分类，一律算 hard。profile 里没有 executive 模型时也一律 hard。
 
@@ -79,7 +79,7 @@ profile 填了专家槽、又填了 `router`、并且请求不带图时，router
 
 循环里有几条规则是看着跑出问题之后才加的：
 
-- 回复空、只有思考：把思考当 assistant 轮补回去再问一次，不带思考预算。加这条之前，qwen3.5-4b 有一次把同一个失败调用重发了 30 次。再答还是空，就把那段思考当答案。
+- 回复空、只有思考：把思考当 assistant 轮补回去再问一次，不带思考预算，trace 记一条 `thought_only`。这条在 `Ctx.chat` 里，每个 lobe 都一样。加这条之前，qwen3.5-4b 有一次把同一个失败调用重发了 30 次。再答还是空，就把那段思考当答案。
 - 工具调用的参数写到一半撞上限：什么都不跑，客户端也拿不到这个残缺调用，重试一次给两倍的回复空间并强制思考。第二次还写不完就停下来说清楚。
 - 正文写到一半撞上限：单独再要一次结论，不思考，最多 2048 token，接在草稿后面。结论自己也被截断就丢掉。读的人会把最后一段当答案，在 GPQA 上接上被截的结论，连答案都没有的题反而比只交草稿更多。
 - 同一个 (工具, 参数, 结果) 出现三次就停下，把结果交出去，不再发第四次。出现两次把思考预算抬到本档的上限并记一条 `stalled`。这条规则对客户端跑的工具同样生效，跨整个请求算。
@@ -88,7 +88,9 @@ profile 填了专家槽、又填了 `router`、并且请求不带图时，router
 
 ### motor
 
-reasoning 用一句话告诉工具手要什么。motor 先调一轮工具，第二次调用不带工具，从结果里作答。要再走一步就得回到 reasoning，因为计划在那边。
+reasoning 用一句话告诉工具手要什么。motor 先调一轮工具，第二次调用不带工具，从结果里作答。要再走一步就得回到 reasoning，因为计划在那边。motor 不拿 `python`，程序由 reasoning 自己写。
+
+不管哪个 lobe 发的工具调用，都经 `motor.call_tools` 执行。
 
 结果留在 motor 自己的对话里。以前原样交回去的时候，`cat` 一个文件就把整个文件搬进了求解叶的对话，之后每一轮都要重新预填一遍。
 
@@ -142,9 +144,9 @@ relay 本身也可以按 profile 覆盖（lobes.yaml 的 `relays: {profile: {...
 
 CLI：`install`、`serve`、`models`、`load`、`unload`、`ask`、`eval`、`api`，另有 `providers test`。`lobes api` 在 8090 开两个端点：`/v1/chat/completions`（`lobes-v1` 走 v1 profile，`lobes/<名字>` 走任意 profile）和 `/v1/responses`（Codex 从 chat completions 换过去之后说的那套）。请求自带 `tools` 时，工具调用交回客户端跑；不带就用本地的。`stream=true` 时接力的每一步作为 `reasoning_content` 发出去，答案作为 `content`。
 
-provider 只有一个接口：`providers.chat(provider, model, messages, *, schema, images, thinking, thinking_budget, tools, temperature, max_tokens, seed, timeout, ctx, on_delta) -> Reply`，一个 OpenAI 兼容适配器同时覆盖 llama-server 和 LM Studio。思考开关每次显式发 `chat_template_kwargs.enable_thinking`。种子每次调用加上调用序号。
+provider 只有一个接口：`providers.chat(provider, model, messages, *, schema, choices, images, thinking, thinking_budget, tools, temperature, max_tokens, seed, timeout, ctx, on_delta) -> Reply`，一个 OpenAI 兼容适配器同时覆盖 llama-server 和 LM Studio。`choices` 是几个词，转成 llama-server 的 `grammar`。思考开关每次显式发 `chat_template_kwargs.enable_thinking`。种子每次调用加上调用序号。
 
-runner.py 一条直线，状态是一个 `TaskState`。每步追加写 `runs/<task_id>/trace.jsonl`，记录类型有 start、model、intake、requirements、call、tool、cut、stalled、review、cap、stop、language_error、final。工具的原始结果各存一个 json。
+runner.py 一条直线，状态是 `task.py` 的 `TaskState`，除了请求本身分三组：`turn` 是这一轮定下的（路线、话题、时间、要求、打回），客户端的工具步骤会原样拿回；`work` 是解题中间产物（对话、跑过的工具、观察、草稿）；`spend` 是用量和上限。每步追加写 `runs/<task_id>/trace.jsonl`，记录类型有 start、model、intake、requirements、call、thought_only、tool、cut、stalled、review、cap、stop、language_error、final。工具的原始结果各存一个 json。
 
 模块之间只传一样结构化的东西：`schema.py` 的 `Observation`（source、ref、summary），感知写、材料读。其余都是纯文本和 `TaskState` 的字段。
 
@@ -152,8 +154,8 @@ runner.py 一条直线，状态是一个 `TaskState`。每步追加写 `runs/<ta
 Lobes/
   README.md  README.zh-CN.md  lobes.yaml  pyproject.toml
   docs/    ARCHITECTURE.md  ARCHITECTURE.en.md  img/
-  lobes/   cli.py config.py providers.py schema.py models.py runner.py tools.py install.py
-           api.py responses.py eval.py
+  lobes/   cli.py config.py providers.py schema.py models.py task.py runner.py tools.py install.py
+           server.py api.py responses.py eval.py
            lobe/  executive.py perception.py reasoning.py motor.py language.py
            hard/  官方判分器：ifeval、math500、bfcl、livecodebench、repo
   eval/    suites/（题库 jsonl，make.py 出 tools 和 multistep 的题）  data/（题库和 repo 快照）

@@ -49,7 +49,7 @@ user
 
 ### executive
 
-The difficulty model is a classifier, and the prompt asks it one thing: easy, medium or hard, at temperature 0 and 5 tokens. Only a reply that starts with easy takes the simple route; everything else is hard. A long request is cut to its first 1200 and last 400 characters (`ends()`), because a whole document takes seconds on the CPU and the ask is usually at the ends.
+The difficulty model is a classifier, and the prompt asks it one thing: easy, medium or hard, at temperature 0 and 5 tokens. A grammar holds the reply to one of the three words (`choices`); without it, 75 of 1687 replies did not start with a label. Only easy takes the simple route; everything else is hard. A long request is cut to its first 1200 and last 400 characters (`ends()`), because a whole document takes seconds on the CPU and the ask is usually at the ends.
 
 A request with images skips classification and is always hard. So is every request when the profile has no executive model.
 
@@ -79,7 +79,7 @@ A model with `tools: false` in lobes.yaml gets none at all, and its calls come b
 
 A few rules in the loop were added after watching runs go wrong:
 
-- An empty reply with only thinking: the thought goes back as an assistant turn and the model is asked again without a thinking budget. Before this, qwen3.5-4b once sent the same failing call 30 times. If it still says nothing, the thought becomes the answer.
+- An empty reply with only thinking: the thought goes back as an assistant turn and the model is asked again without a thinking budget, and the trace gets a `thought_only` record. This lives in `Ctx.chat` and applies to every lobe. Before this, qwen3.5-4b once sent the same failing call 30 times. If it still says nothing, the thought becomes the answer.
 - A tool call cut off while its arguments were being written: nothing runs, the client never sees the broken call, and the retry gets twice the room and is forced to think. Cut a second time, the request stops and says so.
 - The body cut off mid-sentence: the conclusion is asked for on its own, without thinking, in at most 2048 tokens, and appended after the draft. A conclusion that is itself cut is dropped. Readers take the last block as the answer, and on GPQA a cut conclusion left more items with no answer at all than the draft did on its own.
 - The same (tool, args, result) three times ends the request with that result instead of a fourth call. Twice raises the thinking budget to the level's cap and writes a `stalled` record. The rule covers the client's tool calls as well, across the whole request.
@@ -88,7 +88,9 @@ When a cap lands before there is a draft, `answer_now` gets one more turn to ans
 
 ### motor
 
-Reasoning tells the tool hand in a sentence what it needs. Motor makes one round of tool calls, and its second call has no tools, so it answers from what came back. A request that needs another step returns through reasoning, which is the lobe holding the plan.
+Reasoning tells the tool hand in a sentence what it needs. Motor makes one round of tool calls, and its second call has no tools, so it answers from what came back. A request that needs another step returns through reasoning, which is the lobe holding the plan. Motor does not get `python`; reasoning writes the programs.
+
+Every lobe's tool calls run through `motor.call_tools`.
 
 The results stay in motor's own conversation. When they were handed back raw, a `cat` of a file put the whole file into the solver's conversation, and every later turn prefilled it again.
 
@@ -142,9 +144,9 @@ Two processes: the llama-server router (started by `lobes serve`, which spawns a
 
 The CLI has `install`, `serve`, `models`, `load`, `unload`, `ask`, `eval`, `api`, plus `providers test`. `lobes api` opens two endpoints on port 8090: `/v1/chat/completions` (`lobes-v1` selects the v1 profile, `lobes/<name>` any profile) and `/v1/responses`, the Responses API that Codex speaks since it dropped chat completions. A request that carries `tools` gets the calls back to run itself; without them the lobes use their own. With `stream=true` the relay's steps go out as `reasoning_content` and the answer as `content`.
 
-There is one provider interface: `providers.chat(provider, model, messages, *, schema, images, thinking, thinking_budget, tools, temperature, max_tokens, seed, timeout, ctx, on_delta) -> Reply`, and one OpenAI-compatible adapter covers both llama-server and LM Studio. The thinking switch is sent explicitly on every call as `chat_template_kwargs.enable_thinking`. The seed gets the call index added to it.
+There is one provider interface: `providers.chat(provider, model, messages, *, schema, choices, images, thinking, thinking_budget, tools, temperature, max_tokens, seed, timeout, ctx, on_delta) -> Reply`, and one OpenAI-compatible adapter covers both llama-server and LM Studio. `choices` is a few words, sent to llama-server as a `grammar`. The thinking switch is sent explicitly on every call as `chat_template_kwargs.enable_thinking`. The seed gets the call index added to it.
 
-runner.py is a straight line and the state is one `TaskState`. Every step appends to `runs/<task_id>/trace.jsonl`, with records of kind start, model, intake, requirements, call, tool, cut, stalled, review, cap, stop, language_error and final. Each tool's raw result is stored as its own json.
+runner.py is a straight line. The state is `TaskState` in `task.py`: the request itself plus three groups. `turn` holds what was decided for the turn (route, topic, time, requirements, send-backs) and comes back unchanged on a client's tool step; `work` holds what the lobes build while solving (conversation, tools run, observations, draft); `spend` holds usage against the caps. Every step appends to `runs/<task_id>/trace.jsonl`, with records of kind start, model, intake, requirements, call, thought_only, tool, cut, stalled, review, cap, stop, language_error and final. Each tool's raw result is stored as its own json.
 
 Only one structured object passes between modules: `Observation` in `schema.py` (source, ref, summary), written by perception and read into the brief. Everything else is plain text and fields on `TaskState`.
 
@@ -152,8 +154,8 @@ Only one structured object passes between modules: `Observation` in `schema.py` 
 Lobes/
   README.md  README.zh-CN.md  lobes.yaml  pyproject.toml
   docs/    ARCHITECTURE.md  ARCHITECTURE.en.md  img/
-  lobes/   cli.py config.py providers.py schema.py models.py runner.py tools.py install.py
-           api.py responses.py eval.py
+  lobes/   cli.py config.py providers.py schema.py models.py task.py runner.py tools.py install.py
+           server.py api.py responses.py eval.py
            lobe/  executive.py perception.py reasoning.py motor.py language.py
            hard/  official graders: ifeval, math500, bfcl, livecodebench, repo
   eval/    suites/ (jsonl suites, make.py generates the tools and multistep answers)

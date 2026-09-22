@@ -4,6 +4,7 @@ observations, each labelled with its source."""
 import json
 
 from ..schema import Observation
+from .executive import ends
 
 SCHEMA = {"type": "object", "additionalProperties": False, "required": ["description", "text", "details"],
           "properties": {"description": {"type": "string"},
@@ -25,26 +26,26 @@ def ocr(path):
 
 
 def look(ctx, state, images=None):
-    from .executive import ends
     images = images or state.images
     prompt = ("Describe this image for someone who cannot see it, copy out all readable text exactly, and list "
               f"details that matter for this task: {ends(state.goal)}")
     r = ctx.chat(state, "perception", [{"role": "user", "content": prompt}], schema=SCHEMA,
                  images=images, thinking=False, max_tokens=1000)
     d = r.data or {"description": r.text, "text": "", "details": []}
-    ref = f"perception_{sum(o.source == 'lobe:perception' for o in state.observations)}"
+    seen = state.work.observations
+    ref = f"perception_{sum(o.source == 'lobe:perception' for o in seen)}"
     (ctx.rundir / f"{ref}.json").write_text(json.dumps(d, ensure_ascii=False, indent=1), encoding="utf-8")
     summary = d["description"] + (f"\nText in image: {d['text']}" if d["text"] else "") + \
         ("".join(f"\n- {x}" for x in d["details"]) if d["details"] else "")
-    state.observations.append(Observation(source="lobe:perception", ref=ref, summary=summary[:3000]))
+    seen.append(Observation(source="lobe:perception", ref=ref, summary=summary[:3000]))
     for img in images:
         lines = ocr(img)
         if lines is None:
             break
         # Keep the OCR reading separate from the model's description.
-        ref = f"ocr_{sum(o.source == 'tool:ocr' for o in state.observations)}"
+        ref = f"ocr_{sum(o.source == 'tool:ocr' for o in seen)}"
         text = "\n".join(lines)
-        state.tool_results[ref] = {"stdout": text, "exit": 0}
-        state.observations.append(Observation(source="tool:ocr", ref=ref, summary=("Text the ocr engine read, top to bottom:\n" + text) if text else "(the ocr engine found no text)"))
+        state.work.tool_results[ref] = {"stdout": text, "exit": 0}
+        seen.append(Observation(source="tool:ocr", ref=ref, summary=("Text the ocr engine read, top to bottom:\n" + text) if text else "(the ocr engine found no text)"))
         ctx.trace.write("tool", ref=ref, call={"name": "ocr", "args": {"image": str(img)}}, exit=0, summary=text[:500])
     return d

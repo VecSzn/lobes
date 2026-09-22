@@ -1,7 +1,7 @@
 """One chat() for the OpenAI-compatible endpoints on this machine: llama-server, LM Studio.
 
 Structured output goes through response_format json_schema. llama-server turns that into a
-grammar, so the JSON is valid by construction.
+grammar, so the JSON is valid by construction. A pick from a few words goes through a grammar of its own.
 """
 import base64
 import io
@@ -16,7 +16,7 @@ import httpx
 @dataclass
 class Reply:
     text: str
-    data: dict | list | None      # parsed JSON when a schema was given
+    data: dict | list | str | None    # parsed JSON when a schema was given, the word picked when choices were
     reasoning: str | None         # <think> content if the server split it out
     usage: dict
     ms: int
@@ -54,9 +54,11 @@ def _image_part(path):
     return {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{base64.b64encode(raw).decode()}"}}
 
 
-def chat(provider, model, messages, *, schema=None, images=None, thinking=None, thinking_budget=None, tools=None,
-         temperature=0.2, max_tokens=2048, seed=None, timeout=600.0, ctx=None, on_delta=None):
-    """on_delta(kind, text) streams the reply: kind is "reasoning", "content" or "tool_call" (argument text).
+def chat(provider, model, messages, *, schema=None, choices=None, images=None, thinking=None, thinking_budget=None,
+         tools=None, temperature=0.2, max_tokens=2048, seed=None, timeout=600.0, ctx=None, on_delta=None):
+    """choices: the reply is one of these words and nothing else; data is that word. The prompt still has to ask
+    for them, the grammar only keeps the model from writing anything else.
+    on_delta(kind, text) streams the reply: kind is "reasoning", "content" or "tool_call" (argument text).
     The Reply is the same either way."""
     messages = [dict(m) for m in messages]
     for m in messages:      # a call cut off by max_tokens kept half its json; the chat template refuses it with a 500
@@ -79,6 +81,8 @@ def chat(provider, model, messages, *, schema=None, images=None, thinking=None, 
         else:
             messages.insert(0, {"role": "system", "content": hint})
         body["response_format"] = {"type": "json_schema", "json_schema": {"name": "out", "schema": schema}}
+    if choices:
+        body["grammar"] = "root ::= " + " | ".join(json.dumps(c) for c in choices)
     # templates without this switch ignore it
     body["chat_template_kwargs"] = {"enable_thinking": bool(thinking)}
     if not thinking or thinking_budget is not None:    # llama-server ends the thinking there and lets the model answer
@@ -101,6 +105,8 @@ def chat(provider, model, messages, *, schema=None, images=None, thinking=None, 
             data = None
         if not isinstance(data, dict) or any(k not in data for k in schema.get("required", ())):
             data = None
+    if choices and text.strip() in choices:    # a server that ignores the grammar can still answer with one
+        data = text.strip()
     return Reply(
         text=text,
         data=data,

@@ -7,7 +7,8 @@ from rich import print as rprint
 from rich.markup import escape
 from rich.table import Table
 
-from . import config, install, providers
+from . import config, install, providers, runner, server
+from . import eval as evals
 from .models import ModelManager
 
 app = typer.Typer(add_completion=False, no_args_is_help=True)
@@ -92,8 +93,7 @@ def ask(prompt: str,
     if effort:
         cfg["effort"] = effort
     if lobe is None:
-        from .runner import run
-        state = run(cfg, prompt, profile=profile, images=image)
+        state = runner.run(cfg, prompt, profile=profile, images=image)
         print(state.answer)           # model text is not rich markup: [n // 2] would vanish
         for uncertainty in state.uncertainties:
             print(f"Note: {uncertainty}", file=sys.stderr)
@@ -121,23 +121,21 @@ def eval_(conditions: str = "R,A,B,B3,C,D", seeds: str = "0,1,2", suites: str = 
           ids: str = typer.Option(None, help="comma-separated item ids; only these run"),
           workers: int = typer.Option(1, help="items run at once; more than 1 only where every model stays loaded"),
           report: bool = typer.Option(False, help="print the tables from eval/results instead of running")):
-    from . import eval as eval_
     if report:
-        print(eval_.report(quick, tag))
+        print(evals.report(quick, tag))
         return
     cfg = config.load()
     if effort:
         cfg["effort"] = effort
-    eval_.main(cfg, conditions.split(","), [int(x) for x in seeds.split(",")], quick,
+    evals.main(cfg, conditions.split(","), [int(x) for x in seeds.split(",")], quick,
                suites.split(",") if suites else None, tag, workers, set(ids.split(",")) if ids else None)
 
 
 @app.command()
 def api(host: str = "127.0.0.1", port: int = 8090, profile: str = None):
     """OpenAI-compatible /v1/chat/completions in front of the runner; model "lobes/<profile>" picks the profile."""
-    from . import api as api_
     rprint(f"lobes api on http://{host}:{port}/v1  (llama-server must be running)")
-    api_.serve(config.load(), host, port, profile)
+    server.serve(config.load(), host, port, profile)
 
 
 @prov_app.command("test")
