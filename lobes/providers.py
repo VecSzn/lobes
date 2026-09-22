@@ -25,15 +25,14 @@ class Reply:
     tool_calls: list = field(default_factory=list)   # openai format, ready to send back in the assistant turn
 
 
-MIN_SIDE = 768   # Preserve legibility when sending small images to the vision encoder.
-# llama-server writes it into the thinking where the budget ends it. "Time to answer." on its own left the
-# model free to derive everything again in the body: on GPQA that second pass filled the answer room and got
-# cut before it named an answer, on 48% of items. It reaches every lobe, review included, so it asks for the
-# conclusion each one owes rather than for an answer.
+MIN_SIDE = 768   # small images get upscaled to this so the vision encoder can read them
+# llama-server writes this into the thinking when the budget runs out. with a bare "Time to answer." the model
+# would redo the whole derivation in the reply and run out of room before answering. every lobe gets it, the
+# review too, so it asks for a conclusion instead of an answer.
 BUDGET_MESSAGE = ("\nOut of thinking time. Give your conclusion now, from what you worked out above. "
                   "Do not start over.\n")
-# gemma-4-E2B thought 0.3-2.8K tokens with the switch off on 39 reviews in 750 items, saving none; a budget of 0
-# moved the thought into the answer, and an empty thought block in the prompt made most reviews an essay
+# thinking cap for calls that asked for none. some models think anyway with the switch off, and a cap of 0
+# pushed the thought into the answer
 UNASKED_THOUGHT = 256
 
 
@@ -72,15 +71,15 @@ def chat(provider, model, messages, *, schema=None, images=None, thinking=None, 
     if seed is not None:
         body["seed"] = seed
     if schema is not None:
-        # the grammar only constrains tokens: a model that was not told the format plans prose and the grammar
-        # then mangles it (gemma answered "}54"), so the schema is in the prompt too
+        # the grammar only constrains tokens. a model that wasn't told the format plans prose and the grammar
+        # mangles it, so the schema goes in the prompt too
         hint = "Reply with JSON matching this schema:\n" + json.dumps(schema)
         if messages[0]["role"] == "system":
             messages[0]["content"] += "\n" + hint
         else:
             messages.insert(0, {"role": "system", "content": hint})
         body["response_format"] = {"type": "json_schema", "json_schema": {"name": "out", "schema": schema}}
-    # Explicit for templates that support this switch; other templates may ignore it.
+    # templates without this switch ignore it
     body["chat_template_kwargs"] = {"enable_thinking": bool(thinking)}
     if not thinking or thinking_budget is not None:    # llama-server ends the thinking there and lets the model answer
         body["thinking_budget_tokens"] = thinking_budget if thinking else UNASKED_THOUGHT

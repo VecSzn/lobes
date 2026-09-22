@@ -1,9 +1,7 @@
 """Motor: the tool hand. Reasoning says in words what it needs from files, the shell, the web or the screen; motor
-makes the tool calls, reads what came back and answers the request from it.
-
-The results stay here. Handing them over raw made the relay's context the solver's context and nothing more: a
-`cat` of a file put the whole file in the solver's conversation, where every later turn prefills it again. Two
-models are only worth more than one if the second one holds what the first never has to."""
+makes the tool calls, reads the results and answers from them.
+The raw results stay here. Passed through, a `cat` of a file would sit in the solver's conversation and get
+prefilled again on every later turn."""
 import json
 
 from .. import tools
@@ -17,10 +15,8 @@ def act(ctx, state, request):
     from ..runner import call_tools
     specs = tools.specs()
     msgs = [{"role": "system", "content": SYS}, {"role": "user", "content": request}]
-    # One round of tools, then the answer. The second call has no tools, so a request that needs another step comes
-    # back through reasoning, which is the lobe holding the plan. Before, that call could only say whether the hand
-    # wanted more and its reply was thrown away: 123 of the hand's 315 calls over 59 repo items, 15.6% of the wall
-    # time, for nothing.
+    # one round of tools, then the answer. the second call gets no tools, so if more is needed it goes back through
+    # reasoning, which holds the plan
     r = ctx.chat(state, "motor", msgs, tools=specs)
     if not r.tool_calls:
         return r.text.strip() or "The tool hand made no tool calls."

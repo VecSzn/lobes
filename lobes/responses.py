@@ -1,9 +1,8 @@
-"""POST /v1/responses, the OpenAI Responses API that Codex speaks since it dropped chat completions. The input items
-become the chat messages api.py takes, and the run goes out as Responses events: the models' thinking as quoted
-commentary messages, the relay's steps as reasoning summaries, the answer as a final_answer message, calls to the
-client's tools as function_call items.
-Namespaced tools are flattened to namespace__name and split again on the way out. Hosted tools such as web_search
-are dropped: the client expects the provider to run those."""
+"""POST /v1/responses, the Responses API Codex uses since it dropped chat completions. Input items become the chat
+messages api.py takes. The run goes back as Responses events: thinking as quoted commentary messages, relay steps as
+reasoning summaries, the answer as a final_answer message, client tool calls as function_call items.
+Namespaced tools are flattened to namespace__name and split again on the way out. Hosted tools like web_search are
+dropped, since the client expects the provider to run those."""
 import asyncio
 import json
 import re
@@ -77,8 +76,8 @@ def _messages(body):
 
 
 def _steady(text):
-    """Codex heads a result with a random chunk id and the wall time, so the same command never gave the same result
-    and runner's repeat checks let qwen3.5-4b run one failing disasm 13 times. Only the header before Output: goes."""
+    """Drops the random chunk id and wall time Codex puts on each result. With them two runs of the same command never
+    match, and runner's repeat check misses a model stuck in a loop. Only the header before Output: is touched."""
     head, sep, rest = text.partition("Output:")
     return re.sub(r"^(?:Chunk ID: \w+|Wall time:? [\d.]+ seconds)\r?\n", "", head, flags=re.M) + sep + rest if sep else text
 
@@ -115,8 +114,8 @@ def _call(call, names, running=None):
     arguments = _unescalated(call["function"].get("arguments") or "{}")
     args = _args(arguments) if name == "exec_command" and not ns and running and "write_stdin" in names else None
     if args and (args.get("cmd"), args.get("workdir")) in running:
-        # Codex returns a command after 10 s with a session id; qwen3.5-4b started the same IDA search again three
-        # times instead of waiting on it, so the repeat waits for the first run
+        # Codex hands a long command back after 10 s with a session id, and the model tends to start it again
+        # instead of waiting. turn the repeat into a wait on the first run
         name, arguments = "write_stdin", json.dumps({"session_id": running[(args.get("cmd"), args.get("workdir"))],
                                                      "yield_time_ms": 30000})
     item = {"type": "function_call", "id": f"fc_{uuid.uuid4().hex[:24]}", "call_id": call["id"], "name": name,
@@ -125,8 +124,8 @@ def _call(call, names, running=None):
 
 
 def _unescalated(arguments):
-    """Codex refuses a call with justification or prefix_rule unless sandbox_permissions is require_escalated, without
-    running it, and qwen3.5-4b sent the refused call again 132 times. Both only word an escalation, so they go."""
+    """Codex refuses a call that has justification or prefix_rule without sandbox_permissions require_escalated, and
+    the model just keeps resending it. Both fields only mean something for an escalation, so they're dropped."""
     try:
         args = json.loads(arguments)
     except ValueError:
@@ -197,11 +196,11 @@ def make_route(cfg, default_profile=None):
                 cancel.set()        # uvicorn cancels the stream when the client disconnects
 
         async def events():
-            # Codex 0.155 never draws a reasoning item, only its last line as the status label, and it sends every
-            # delta to the item added last. So the thinking goes out as commentary messages, which it draws as text,
-            # each closed before the next item. Relay steps become closed reasoning items for the label and head the
-            # thinking after them. Codex replaces an item with its done copy, so a message learns its phase at the end:
-            # final_answer for the answer, which folds the work above it, commentary for text before tool calls
+            # Codex 0.155 doesn't draw reasoning items (it only uses their last line as the status label) and applies
+            # every delta to the newest item. so thinking goes out as commentary messages, which it draws as text,
+            # each closed before the next item, and relay steps as closed reasoning items that also head the thinking
+            # after them. Codex swaps an item for its done copy, so a message gets its phase at the end: final_answer
+            # for the answer (it folds the work above), commentary for text before tool calls
             task = asyncio.ensure_future(work())
             yield event("response.created", response=head)
             output, live, steps, held = [], [], [], []   # live: [item, kind, text sent, text as written]

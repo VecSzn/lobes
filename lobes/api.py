@@ -1,7 +1,7 @@
 """lobes api: /v1/chat/completions in front of the runner, so anything that talks to OpenAI can talk to the lobes.
-model "lobes-v1" is the v1 profile and "lobes/<profile>" any profile. The conversation reaches the models as messages.
-A request that carries tools gets calls to them back to run itself, like from any chat model; without tools the lobes
-run their own. stream=true sends the relay's work as reasoning_content and the answer as content."""
+model "lobes/<profile>" picks a profile, "lobes-v1" is the v1 profile. If a request carries tools, calls to them come
+back for the client to run, like with any chat model; without tools the lobes use their own.
+stream=true sends the relay's work as reasoning_content and the answer as content."""
 import asyncio
 import base64
 import json

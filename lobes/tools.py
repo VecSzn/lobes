@@ -23,7 +23,7 @@ import httpx
 
 TIMEOUT = 10
 MAX_OUT = 8000     # chars kept per stream; the rest is still on disk
-UNPRIVILEGED = "nobody"      # asked to switch the machine off, the python tool did it to the evaluation box
+UNPRIVILEGED = "nobody"      # a test prompt once got the python tool to power off the eval box
 
 
 def _drop():
@@ -62,8 +62,8 @@ def _run(argv, workdir, shell=False):
 
 
 def _unescape(code):
-    """granite writes newlines as a literal backslash-n inside the json string. Such a one-liner still compiles
-    when a # comment swallows the rest, so without a real newline the unescaped text is tried first."""
+    """Some models write newlines as a literal backslash-n inside the json string. That one-liner can still compile
+    if a # comment eats the rest, so when there's no real newline the unescaped text is tried first."""
     fixed = code.replace("\\n", "\n").replace("\\t", "\t").replace('\\"', '"')
     for c in ((fixed, code) if "\n" not in code else (code, fixed)):
         try:
@@ -77,9 +77,9 @@ def _unescape(code):
 def python(code: str, workdir: Path):
     code = _unescape(code)
     if "print" not in code:
-        # small models write `17 * 23` and expect the value back; show the last expression like a REPL would.
-        # The syntax tree finds it (the last line of `x = round(\n  3.14,\n)` is only ")"); it is echoed in the one
-        # run, since a second run repeats every write and POST, and from the model's own text
+        # small models write `17 * 23` and expect the value back, so echo the last expression like a REPL.
+        # find it with the syntax tree (the last line may be just ")"), and in the same run, since running twice
+        # would repeat every write and POST
         try:
             last = ast.parse(code).body[-1]
         except (SyntaxError, RecursionError, ValueError, IndexError):     # the run shows what is wrong, if anything
@@ -132,8 +132,8 @@ _interpreters = {}      # work dir -> _Interpreter
 
 
 class _Interpreter:
-    """One python process per request: small models define a function or import a module in one call and use it in
-    the next, as in a notebook (NameError in 76 of 2469 calls on 09-17, 39 of them a module imported before)."""
+    """One python process per request, like a notebook: small models import or define something in one call and
+    use it in the next."""
 
     def __init__(self, workdir):
         self.dir = Path(tempfile.mkdtemp(prefix="lobes-python-"))
@@ -246,8 +246,8 @@ def web_fetch(url: str, workdir: Path):
     return {"content": text[:MAX_OUT * 4], "status": r.status_code, "exit": 0 if r.status_code < 400 else 1}
 
 
-# duckduckgo's page for clients without javascript. Every url on it goes through a redirect that carries the real
-# one. Bing was tried first and is not usable: it answers a long-tail query with results for an unrelated one.
+# duckduckgo's no-javascript page. each link is a redirect with the real url in it. (bing gave results for some
+# other query on long-tail searches)
 SEARCH = "https://html.duckduckgo.com/html/?q={}"
 RESULT = re.compile(r'<a[^>]*class="result__(?P<part>a|snippet)"[^>]*href="(?P<href>[^"]*)"[^>]*>(?P<text>.*?)</a>', re.S)
 TARGET = re.compile(r"[?&](?:amp;)?uddg=(?P<url>[^&\"]+)")

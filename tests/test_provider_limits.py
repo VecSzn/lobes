@@ -46,7 +46,7 @@ def test_tools_and_thinking_budget_reach_the_server(monkeypatch):
     assert sent[0]["tools"] == spec and sent[0]["thinking_budget_tokens"] == 64
     assert reply.tool_calls == [call] and reply.text == ""
     providers.chat({"base_url": "http://test/v1"}, "model", [{"role": "user", "content": "x"}], thinking=False, thinking_budget=64)
-    # gemma wrote reasoning_content with the switch off; a thought nobody asked for stops short
+    # some models think with the switch off, so an unasked thought still gets a small cap
     assert sent[1]["thinking_budget_tokens"] == providers.UNASKED_THOUGHT and "tools" not in sent[1]
     assert sent[1]["reasoning_budget_message"] == providers.BUDGET_MESSAGE
     # the shapes Ctx.chat sends: switched off with no budget still caps, switched on with none leaves the server's

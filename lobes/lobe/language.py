@@ -1,7 +1,6 @@
-"""Language: reads the request against the work, on whichever side of the draft the relay puts it. After it, it gets
-the request, every tool reasoning ran with the real result, and the draft, and either passes the draft to the user as
-written or sends the work back saying what is wrong. Before it, it gets the request alone and writes down what the
-reply has to satisfy, for the expert's brief."""
+"""Language: the review model. Run after the draft, it reads the request, every tool call with its real result and
+the draft, then passes the draft or says what's wrong with it. Run before the draft, it reads only the request and
+lists what the reply has to cover, for the expert's brief."""
 import json
 
 from .reasoning import brief
@@ -19,8 +18,8 @@ to satisfy.
 
 Write one short line per thing the request asks of the reply. Take them from the request itself and keep its own
 words and numbers; do not add any of your own, and do not answer the request."""
-# a list is all it can write: told in words not to answer the request, gemma-4-E2B answered it on 2 of the first 3
-# items, and that answer would have reached the expert's brief as the reply it has to satisfy
+# forced to a list: told in words not to answer, the 2B answered the request anyway, and that answer would end
+# up in the expert's brief
 LIST = {"type": "object", "additionalProperties": False, "required": ["requirements"],
         "properties": {"requirements": {"type": "array", "minItems": 1, "maxItems": 16,
                                         "items": {"type": "string", "maxLength": 300}}}}
@@ -37,10 +36,8 @@ def work(state):
 
 def requirements(ctx, state):
     """-> what the request asks the reply to satisfy, in the reviewer's words, for the expert's brief.
-
-    The other half of review's job, moved in front of the draft. Over 100 ifeval items every answer that scored
-    wrong had met all of the request's conditions but one, and reading the draft afterwards found 2 of those 25:
-    listing a condition is copying, checking one is counting, and a 2B does the first and not the second."""
+    Wrong answers mostly missed one condition out of several, and reviewing the draft rarely caught which. A 2B can
+    copy the conditions out but is bad at checking a draft against them, so here it lists them before the draft."""
     r = ctx.chat(state, "language", [{"role": "system", "content": ASKS},
                                      {"role": "user", "content": brief(state)}],
                  schema=LIST, temperature=0, max_tokens=512)
@@ -50,9 +47,8 @@ def requirements(ctx, state):
 
 
 def review(ctx, state, lobe="language"):
-    """-> (True, what it wrote) or (False, the problem). A pass ships the draft: a rewrite cost a call's worth of tokens and
-    once turned the reviewer's own remarks into the answer. The verdict is plain text because gemma-4-E2B wrote most
-    of its send_back tool calls without the call marker, so they came back as text and passed. lobe "check" has the
-    expert read its own draft."""
+    """-> (True, what it wrote) or (False, the problem). The verdict is plain text, OK on the first line: as a tool
+    call the small model often left out the call marker, and the rejection came back as text that passed.
+    lobe "check" has the expert read its own draft."""
     text = ctx.chat(state, lobe, [{"role": "system", "content": SYS}, {"role": "user", "content": work(state)}]).text.strip()
     return not text or text.splitlines()[0].strip(" .!*`").upper() == "OK", text

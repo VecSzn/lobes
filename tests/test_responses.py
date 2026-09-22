@@ -107,7 +107,7 @@ def stream(tmp_path, monkeypatch, deltas, draft, answer, body=None, stopped=Fals
 
 
 def test_a_thought_that_became_the_answer_is_shown_once(tmp_path, monkeypatch):
-    # qwen ended inside its thinking and the re-ask came back empty; typed out again it showed twice
+    # the reply ended inside its thinking and the re-ask came back empty. the thought used to show twice
     thought = "Windows 10, from the path." + BUDGET
     assert stream(tmp_path, monkeypatch, [("step", "[lobes] simple"), ("reasoning", thought)], thought,
                   "Windows 10, from the path.") == [("reasoning", "[lobes] simple"), ("final_answer", "Windows 10, from the path.")]

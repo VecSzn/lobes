@@ -16,9 +16,9 @@ def brief(state):
     if state.observations:
         lines.append("\nWhat was read from the attached images:")
     lines += [f"[{o.ref}] ({o.source}) {o.summary}" for o in state.observations]
-    if state.requirements:      # named for what it is, like the images are: the request above is what counts
+    if state.requirements:      # labelled as another lobe's reading, so the request above still wins
         lines.append(f"\nWhat another lobe read the request as asking of the reply:\n{state.requirements}")
-    if state.now:               # asked the date, qwen made one up; one stamp per turn keeps the tool steps cached
+    if state.now:               # without it the model invents a date. one stamp per turn so tool steps stay cached
         lines.append(f"\n(Local time: {state.now})")
     return "\n".join(lines)
 
@@ -45,17 +45,17 @@ def solve(ctx, state, think, feedback=None):
     while True:                 # the request's call cap ends a model that never stops calling tools
         room = ANSWER * (2 if cut else 1)
         r = ctx.chat(state, "reasoning", state.messages, thinking=think, tools=specs or None, temperature=0.6, max_tokens=room)
-        if not r.tool_calls and not r.text.strip() and r.reasoning:     # qwen can end inside its thinking, answer and all
+        if not r.tool_calls and not r.text.strip() and r.reasoning:     # whole answer left inside the thinking
             thought = r.reasoning.strip().removesuffix(providers.BUDGET_MESSAGE.strip()).rstrip()
-            # asked again without it, qwen3.5-4b ran the same failing call 30 times; with it, it writes out what it concluded
+            # pass the thought back, or the model just redoes the same failing call
             r = ctx.chat(state, "reasoning", state.messages + [{"role": "assistant", "content": "", "reasoning_content": thought}],
                          thinking=0, tools=specs or None, temperature=0.6, max_tokens=room)
             if not r.tool_calls and not r.text.strip():     # it stopped at once: the thought was the whole answer
                 r = dataclasses.replace(r, text=thought)
         if r.finish == "length" and any(arguments(c) is None for c in r.tool_calls):
-            # cut off while typing a call's data by hand (multi-43: digits of 3**500 into write_file): nothing runs,
-            # the client never gets the broken call, and the retry thinks, which is when the 4B computes instead.
-            # The retry has twice the room for a long file; cut again, the call does not fit and the request stops.
+            # ran out of tokens while typing a call's arguments by hand, e.g. a huge number into write_file.
+            # don't run it or pass it on. retry once with thinking and twice the room (with thinking the 4B
+            # usually computes the value instead); a second cut stops the request.
             names = [(c.get("function") or {}).get("name", "") for c in r.tool_calls]
             ctx.trace.write("cut", tools=names)
             if cut:
@@ -70,15 +70,13 @@ def solve(ctx, state, think, feedback=None):
             say(state, "\n[retry] a tool call was cut off at the token limit\n")    # the retry's text starts a new message
             continue
         if r.finish == "length" and not r.tool_calls and r.text.strip():
-            # Out of room mid-sentence with the work already written: the draft scores zero for want of its last
-            # line, so it is asked for that line alone.
+            # out of room before the last line. the work is there, so ask for just the conclusion
             ask = state.messages + [{"role": "assistant", "content": r.text},
                                     {"role": "user", "content": "That reply reached the token limit before you "
                                      "finished. State your conclusion now, on its own. Do not work through it again."}]
             end = ctx.chat(state, "reasoning", ask, thinking=0, temperature=0.6, max_tokens=CONCLUSION)
-            # it goes after the draft, because a reader takes the last block for the answer. That is also why a
-            # conclusion cut off in its turn is dropped: it would bury whatever the draft did reach (GPQA 09-18,
-            # 23 items: keeping the cut ones scored 1 and kept 19 without an answer, against 7 and 13 for the draft).
+            # appended, since readers take the last block as the answer. if the conclusion got cut too, drop it
+            # so it doesn't bury whatever the draft did reach
             if end.finish != "length" and end.text.strip():
                 r = dataclasses.replace(r, text=r.text.rstrip() + "\n\n" + end.text.strip())
         cut = False
@@ -91,9 +89,8 @@ def solve(ctx, state, think, feedback=None):
         state.ran += call_tools(ctx, state, r, state.messages, specs, extra)
         if ctx.think_mode(state) == "first":    # the plan is made; the steps after a tool result go without thinking
             think = 0
-        # the rule runner.run keeps for client calls, over the whole request: NeoHorse sent one 404 fetch 18 times
-        # (HumanEval-30, 09-17), and nemotron sent two failing snippets in turn up to the call cap (tools-64, 09-17).
-        # Asked again without tools, qwen writes the call as text and that would ship as the answer.
+        # same repeat rule runner.run uses for client calls, but over the whole request; small models do loop on
+        # a failing call. re-asking without tools doesn't help, the call comes back as text and ships as the answer
         if state.ran.count(state.ran[-1]) > 2:
             stop_repeating(state)
         elif state.ran[-1] in state.ran[:-1]:
@@ -103,10 +100,7 @@ def solve(ctx, state, think, feedback=None):
 
 def answer_now(ctx, state):
     """-> the answer a capped request still owes, from the conversation it already has. One call, no tools.
-
-    A request that ran out of calls has read files and worked most of it out; shipping "I couldn't produce an
-    answer" throws that away, and the reader gets nothing they can use or correct.
-    """
+    A capped request has usually done most of the work, so it gets one last turn to answer from it."""
     from ..runner import CONCLUSION
     msgs = list(state.messages)
     at = max((i for i, m in enumerate(msgs) if m.get("tool_calls")), default=None)

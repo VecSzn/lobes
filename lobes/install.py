@@ -109,7 +109,7 @@ def install_models(cfg, root: Path, names):
 
 def write_presets(cfg, root: Path):
     """models/models.ini for `llama-server --models-preset`. Only models whose files exist go in."""
-    # fit only re-checks memory when layers and context are set: 0.3-0.5 s of every load on the 5090, 09-17
+    # layers and ctx are set, so fit would only re-check memory, and that cost 0.3-0.5 s a load
     lines = ["version = 1", "", "[*]", f"c = {cfg['llama']['ctx']}", "jinja = true", "n-gpu-layers = 999", "fit = off"]
     if cfg["llama"].get("threads"):
         lines.append(f"t = {cfg['llama']['threads']}")

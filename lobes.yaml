@@ -7,8 +7,8 @@ llama:
   port: 8080
   ctx: 16384
   # threads: 8              # llama-server starts one thread per core it sees; set this on a box with a cpu quota
-  parallel: 1                # requests per model at once. llama-server's 4 slots share one context, so two long
-                             # conversations at once both failed; one slot queues the second. An eval box sets 4.
+  parallel: 1                # requests per model at once. with 4 slots sharing one context, two long conversations
+                             # both failed; with 1 the second one waits. the eval box used 4
   vram_budget_mb: 6800       # 8188 total minus what the desktop already holds; recalibrate from `lobes models`.
                              # qwen3.5-4b at 131k and gemma4-e2b together peaked at 7578 of 8188 with the desktop
 
@@ -38,8 +38,8 @@ models:
     file: Qwen3.5-4B-Q4_K_M.gguf
     sha256: 00fe7986ff5f6b463e62455821146049db6f9313603938a70800d1fb69ef11a4
     vram_mb: 3750            # nvidia-smi delta at the ctx and kv below; was 4638 at ctx 131072
-    ctx: 65536               # Codex sends ~18k tokens of prompt and tools before any work. At 131072 the cache
-                             # left no room for the tool hand and every handoff swapped a model out, 9 a request
+    ctx: 65536               # Codex sends ~18k tokens of prompt and tools before any work. at 131072 the cache
+                             # left no room for the tool hand, so every handoff swapped a model out
     kv: q4_0                 # 1.1 GB of cache at 131072; found 3 of 3 planted facts in a 99k prompt
     preset: {spec-type: ngram-map-k}   # drafts from the context: a copied file ran 280 -> 1034 tok/s on the pod 5090
     thinking: true
@@ -63,20 +63,20 @@ models:
     ctx: 32768
     vram_mb: 1900            # nvidia-smi delta, alone at the ctx above; 1800 at ctx 16384
     tools: false             # llama.cpp gets this model's calls as plain text, so it is given none
-  granite-1b:                # v1 topic router; 330 of 341 on the 09-14 routing set, 0.85 s a call on the CPU
+  granite-1b:                # topic router in the v1 profile, 0.85 s a call on the CPU
     repo: ibm-granite/granite-4.0-h-1b-GGUF
     file: granite-4.0-h-1b-Q8_0.gguf
     sha256: f29248184ca766350e56e6d161c2a637ad302a6d595e15d4a62cd58327a0ac0e
     device: cpu
     resident: true
     vram_mb: 0
-  nemotron-3-nano-4b:        # v1 math expert; NVIDIA open model license, English
+  nemotron-3-nano-4b:        # math expert in the v1 profile; NVIDIA open model license, English
     repo: lmstudio-community/NVIDIA-Nemotron-3-Nano-4B-GGUF
     file: NVIDIA-Nemotron-3-Nano-4B-Q4_K_M.gguf
     sha256: 083af225449463dd7c38bebc888f9dcad187b834d8b15e08c297dda37c968b50
     ctx: 131072              # at 32768 a 38k-token Codex prompt ran out of room; 4 of its 42 layers hold a kv cache
     kv: q8_0                 # found 3 of 3 planted facts in a 106k prompt
-    vram_mb: 4550            # nvidia-smi peak delta 2026-09-17 during that prompt, alone; 3550 at ctx 32768 f16
+    vram_mb: 4550            # nvidia-smi peak delta during that prompt, alone; 3550 at ctx 32768 f16
     thinking: true
   qwen3.5-9b:
     repo: unsloth/Qwen3.5-9B-GGUF

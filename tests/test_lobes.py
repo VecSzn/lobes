@@ -64,7 +64,7 @@ def simulate(tmp_path, monkeypatch):
 
 
 def test_model_written_code_runs_with_root_dropped(tmp_path):
-    # 09-19: a BFCL item asked for the machine to be switched off and the python tool ran it on the evaluation box
+    # a test prompt once got the python tool to power off the eval box
     import os
     drop = tools._drop()
     if os.name != "posix" or os.geteuid() != 0:
@@ -90,7 +90,7 @@ def test_tools_timeout_and_file_boundary(tmp_path, monkeypatch):
     assert tools.run("web_fetch", {"url": "http://localhost:PORT/x"}, tmp_path)["exit"] == 1     # crashed the request
     assert tools.run("write_file", {"path": "../outside", "content": "x"}, tmp_path)["exit"] != 0
     assert tools.run("no_such_tool", {}, tmp_path)["exit"] != 0
-    assert tools.run("edit_file", {"path": ".", "old": "a", "new": "b"}, tmp_path)["exit"] == 1     # HumanEval-28 crashed on this
+    assert tools.run("edit_file", {"path": ".", "old": "a", "new": "b"}, tmp_path)["exit"] == 1     # crashed the request
     assert tools.run("write_file", {"path": ".", "content": "x"}, tmp_path)["exit"] == 1
 
 
@@ -176,7 +176,7 @@ def test_the_shipped_relay_ships_the_draft_a_review_rejected_and_notes_why(simul
 
 
 def test_the_review_model_can_read_the_request_in_front_of_the_draft_instead(simulate):
-    # ifeval 09-18: 25 wrong answers, every one of them a reply that met all of the request's conditions but one
+    # wrong answers here mostly missed one condition out of several
     state, seen, trace = simulate("Write a resume with no commas.", {
         "reasoning": ["Here it is."], "language": [{"requirements": ["a resume", "no commas anywhere"]}]},
         relays={"specialists": {"language": "requirements"}})
@@ -212,13 +212,13 @@ def test_a_reply_that_ends_inside_its_thinking_is_asked_again_to_write_it_out(si
     asked = [(msgs, kw) for lobe, msgs, kw in seen if lobe == "reasoning"]
     assert [kw["thinking"] for _, kw in asked] == [True, False]
     assert asked[1][0][-1] == {"role": "assistant", "content": "", "reasoning_content": ended.reasoning}
-    # the reply that stopped at once on 09-17 left "未能生成可用的回答" in Codex
+    # an empty re-ask used to leave Codex with no answer at all
     state, _, _ = simulate("which OS is this", {"executive": ["easy"], "reasoning": [ended, ""]})
     assert state.answer == ended.reasoning
 
 
 def test_a_body_cut_off_at_the_token_limit_is_asked_for_its_conclusion(simulate):
-    # GPQA 09-18: the work was written and the last line was not, and the draft alone scored zero on 34% of items
+    # the work got written but not the last line, so there was nothing to grade
     half = reply(text="Star A sits at declination -30, so from Paranal it", finish="length")
     state, seen, _ = simulate("which stars are visible",
                               {"executive": ["easy"], "reasoning": [half, r"So the answer is \boxed{C}."]})
@@ -233,8 +233,7 @@ def test_a_body_cut_off_at_the_token_limit_is_asked_for_its_conclusion(simulate)
 
 
 def test_a_conclusion_that_is_itself_cut_off_is_dropped(simulate):
-    # GPQA 09-18: on the 23 items whose conclusion was cut in its turn, appending it scored 1 and left 19 without
-    # an answer, against 7 and 13 for the draft on its own: a reader takes the last block for the answer
+    # readers take the last block as the answer, so a cut conclusion would bury whatever the draft reached
     half = reply(text="Star A sits at declination -30, so from Paranal it", finish="length")
     again = reply(text="To determine which stars are visible we check two conditions. First,", finish="length")
     state, seen, _ = simulate("which stars are visible",
@@ -251,7 +250,7 @@ def test_a_call_lobes_runs_that_repeats_with_the_same_result_thinks_then_stops_w
     asked = [kw for lobe, _, kw in seen if lobe == "reasoning"]
     assert [kw["thinking_budget"] for kw in asked] == [None, None, runner.EFFORT["medium"]["think"]]
     assert [r["tool"] for r in trace if r["kind"] == "stalled"] == ["python"] and not state.capped and state.stopped
-    # two snippets sent in turn, each failing the same way: the call cap used to end it (tools-64, 09-17)
+    # two snippets sent in turn, each failing the same way. the call cap used to end this one
     n, other = len(seen), calls(("python", {"code": "y = 2"}))
     state, seen, trace = simulate("what is x", {"executive": ["easy"], "reasoning": [again, other, again, other, again, "x is 1"]},
                                   relays={"specialists": {"think": "off"}})

@@ -11,33 +11,28 @@ import httpx
 from . import config, providers, tools
 from .models import ModelManager
 
-EFFORT = {   # every level runs the same relay; a level only sets how long reasoning may think per call
+EFFORT = {   # same relay at every level, only the budgets change
     "low":    dict(think=1024, calls=12, tokens=16384, seconds=180),
     "medium": dict(think=4096, calls=20, tokens=32768, seconds=420),
     "high":   dict(think=8192, calls=30, tokens=65536, seconds=900),
 }
-# seconds stops new calls and bounds each HTTP wait. Model loads and tool runs are not cut, so a request can overrun it.
-# Older clients may still send these names.
-ALIASES = {"auto": "medium", "xhigh": "high", "max": "high"}
+# seconds is checked before each call and caps each HTTP wait. loads and tool runs aren't timed, so a request can run over.
+ALIASES = {"auto": "medium", "xhigh": "high", "max": "high"}    # old names some clients still send
 ANSWER = 4096        # tokens a reply may use after its thinking
-# Room for the conclusion of a reply that ran out of room. Over 198 GPQA items the longest conclusion that fit
-# took 1590 tokens and half took 8; the ones that ran to ANSWER had started the derivation over. With this much
-# room the conclusion was cut on 23 of 94 items, and asking those again with 256 finished 1 of 23.
-CONCLUSION = 2048
-SIMPLE_THINK = 1024  # a simple request still thinks a little: with none the 4B made up the time instead of calling python
-# A profile's relay; `relays: {profile: {...}}` in lobes.yaml overrides it. checks: per level, the checks a final text
-# answer goes through in order, "language" the review model and "check" the expert reading its own draft. A rejected
-# draft is rewritten before the next check; the last check's rejection is noted instead.
-RELAY = {"think": "effort",       # effort: think as the level says | off: never | escalate: only a rewrite thinks
-                                  # | first: a draft's or rewrite's first call thinks, the steps after tool results don't
-                                  # an expert's model can set its own: nemotron's thoughts are short, qwen's long
+CONCLUSION = 2048    # room to ask for just the conclusion when a reply runs out; sized on GPQA replies
+SIMPLE_THINK = 1024  # with no thinking at all the 4B guessed the time instead of calling python
+# Per-profile relay settings, `relays: {profile: {...}}` in lobes.yaml overrides them.
+# checks: per level, what reads a final answer before it ships, in order. "language" is the review model,
+# "check" the expert rereading its own draft. a rejected draft is rewritten before the next check; the last
+# check's rejection only gets noted.
+RELAY = {"think": "effort",       # effort: as the level says | off: never | escalate: only a rewrite thinks
+                                  # | first: only the first call of a draft or rewrite thinks
+                                  # a model can override this with its own think: in lobes.yaml
          "checks_on": "hard",      # hard: the hard route's answers | all: every answer
-         # what the review model's one call is for. review: it reads the finished draft. requirements: it reads the
-         # request before the draft and writes down what the reply has to satisfy, and then no review runs.
+         # review: read the finished draft | requirements: read the request first and list what the reply
+         # must cover, no review afterwards
          "language": "review",
-         # one entry, so a rejection is noted and the draft ships. Over three 250-item runs the review sent
-         # back 26 answers: the rewrite rescued none and broke two, and every criticism argued about the
-         # arithmetic rather than the wording, which is the part gemma reads worse than the expert.
+         # a single check, so a rejection is only noted. rewrites after a rejection broke more answers than they fixed
          "checks": {level: ["language"] for level in EFFORT},
          "recheck": False}         # false: a checker that passed a draft does not read the same draft again
 
@@ -101,8 +96,8 @@ class TaskState:
     t0: float = field(default_factory=time.perf_counter)
 
     def __post_init__(self):
-        # Codex sends only hosted tools on some turns and responses.py drops those, leaving an empty list. Read as
-        # "the client runs its own tools" that left the request with none at all, so an empty list means none offered.
+        # Codex sometimes sends only hosted tools, which responses.py drops. an empty list has to mean "none
+        # offered", or the request ends up with no tools at all
         self.client_tools = self.client_tools or None
 
     def ms(self):
@@ -396,7 +391,7 @@ def run(cfg, goal, *, profile=None, images=None, task_id=None, messages=None, cl
                 trace.write("requirements", text=state.requirements[:2000])
             except BudgetExceeded:
                 raise
-            except Exception as e:  # as optional as the review it replaces: without it the request goes as written
+            except Exception as e:  # optional like the review; on failure the request goes as written
                 trace.write("language_error", error=str(e)[:300])
         if messages:
             state.messages = [dict(m) for m in messages]
@@ -427,7 +422,7 @@ def run(cfg, goal, *, profile=None, images=None, task_id=None, messages=None, cl
         if state.capped and not state.draft and not state.stopped and not state.tool_calls:
             try:
                 state.draft = reasoning.answer_now(ctx, state)
-            except Exception as e:      # best effort: without it the reply is the line that says nothing at all
+            except Exception as e:      # best effort, otherwise the reply is just "I couldn't produce an answer"
                 trace.write("stop", reason=f"no last word: {e}"[:300])
     finally:
         tools.close(ctx.workdir)

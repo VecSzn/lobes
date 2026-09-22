@@ -19,7 +19,7 @@ from . import config, providers
 from .models import ModelManager
 from .runner import run
 
-# The judges below were fixed before the runs; the runtime never grades itself.
+# the runtime never sees these judges
 NUM = re.compile(r"-?\d[\d,]*(?:\.\d+)?")
 
 
@@ -49,15 +49,12 @@ def same(a, b):
 DATA = config.ROOT / "eval" / "data"
 RESULTS = config.ROOT / "eval" / "results"
 SHUFFLE_SEED = 20260914
-# v1/v2 ran gsm8k 30, tools 20, ocrbench 20, multistep 10, the cut rule of that round; v3 and v4 enlarged them.
-# the first items of an enlarged suite are the ones that ran before, the shuffle seed did not change.
-# the last 30 of each (tools-50 up, multi-40 up) are the harder v4 halves, reported apart from the older ones.
+# the shuffle seed is fixed, so raising N keeps the earlier items first. in tools and multistep the last 30 are the harder ones
 N = {"gsm8k": 200, "humaneval": 30, "tools": 60, "simpleqa": 30, "ocrbench": 50, "multistep": 60, "aime": 30,
-     # the suites above saturate: multistep 95%, humaneval 90%, so a paired test has almost nothing to work with.
-     # these are the sets other models report. gpqa and humanevalplus run whole, which is how they are published.
+     # the ones above are near the ceiling. these are public sets other models report on; gpqa and humanevalplus run whole
      "gpqa": 198, "humanevalplus": 164, "mmlupro": 200, "mbppplus": 200, "ifeval": 541, "math500": 500,
      "bfcl": 500, "lcb": 175, "repo": 80}
-# a run with no --suites keeps the old ruler; the sets added below the line in N are asked for by name
+# what runs without --suites; the rest have to be named
 DEFAULT = ("gsm8k", "humaneval", "tools", "simpleqa", "ocrbench", "multistep", "aime")
 CODE = ("humaneval", "humanevalplus", "mbppplus")       # judged by running the answer, so the fence comes off first
 SMALL = 0                     # seeds 1 and 2: first SMALL items of every suite except multistep
@@ -133,12 +130,9 @@ def fetch():
 
 
 def _letter(text, n=4):
-    """A committed choice, or "" when the model never committed. n is how many options that item has.
-
-    Loose extraction is worth roughly n_options^-1 of free score, because a chemistry answer is full of C3
-    and a genetics one of G2, and a reply that ran out of tokens mid-sentence has not answered at all. So
-    only a box, an explicit "answer is X", or a line holding nothing but the letter counts.
-    """
+    """The letter the model committed to, or "". n is how many options the item has.
+    Strict on purpose: chemistry and genetics text is full of C3 and G2, and a reply cut off mid-sentence hasn't
+    answered. Only a box, an explicit "answer is X", or a last line with nothing but the letter counts."""
     hi = chr(ord("A") + n - 1)
     text = (text or "").strip()
     m = re.findall(rf"\\boxed\{{\s*\(?([A-{hi}])\)?[.)]?\s*\}}", text)
@@ -467,12 +461,12 @@ def report(quick=False, tag=""):
     table("mean tokens", tok)
     table("mean seconds", sec)
     table("mean swaps", lambda rs: statistics.mean(r["swaps"] for r in rs))
-    table("stuck % (v1/v2: step cap with no PASS; v3: any per-item cap hit)", lambda rs: 100 * sum(r["stuck"] for r in rs) / len(rs))
+    table("stuck % (hit a per-item cap)", lambda rs: 100 * sum(r["stuck"] for r in rs) / len(rs))
     table("sent back % (the review found a problem at least once)",
           lambda rs: 100 * sum(bool(r.get("sent_back")) for r in rs) / len(rs))
     table("VRAM peak MB (max over items, includes the desktop)", lambda rs: max(r["vram_peak_mb"] for r in rs))
     table("simpleqa: abstained %", lambda rs: 100 * sum(r["abstained"] for r in rs) / len(rs), ["simpleqa"])
-    table("simpleqa: confident correct % (correct and not abstained)",   # v2 hedges; the v1 judge alone would credit a hedged right guess
+    table("simpleqa: confident correct % (correct and not abstained)",   # the plain judge passes a hedged right guess
           lambda rs: 100 * sum(r["correct"] and not r["abstained"] for r in rs) / len(rs), ["simpleqa"])
     table("simpleqa: empty answer %", lambda rs: 100 * sum(not r["answer"].strip() for r in rs) / len(rs), ["simpleqa"])
     table("simpleqa: unsupported % (answered, not abstained, wrong)",
