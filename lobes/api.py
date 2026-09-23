@@ -14,6 +14,7 @@ from starlette.concurrency import run_in_threadpool
 from starlette.responses import JSONResponse, StreamingResponse
 
 from .runner import request_at, run
+from .task import ALIASES, EFFORT
 
 MODELS = {"lobes-v1": "v1"}
 CONTEXT = "Current runtime context"     # DeepSeek Harness sends its workspace and policy snapshot as a user message
@@ -64,6 +65,11 @@ def _messages(messages, imgdir):
     return out, goal, images
 
 
+def with_effort(cfg, level):
+    """Returns cfg at the effort the client asked for, a level lobes doesn't have (minimal, none) keeps the default."""
+    return dict(cfg, effort=level) if level in EFFORT or level in ALIASES else cfg
+
+
 def usage(state):
     """prompt_tokens is the conversation as the expert last read it: a client sizes its context from it, and the
     router, classifier and review calls are not in that conversation. Every call's tokens summed go under lobes."""
@@ -103,7 +109,7 @@ def make_route(cfg, default_profile=None):
         messages, goal, images = _messages(body.get("messages", []), imgdir)
         if goal is None:
             return JSONResponse({"error": {"message": "messages need a user message"}}, status_code=400)
-        c = dict(cfg, effort=body["reasoning_effort"]) if body.get("reasoning_effort") else cfg   # openai's field name
+        c = with_effort(cfg, body.get("reasoning_effort"))
         kw = dict(profile=profile, images=images, messages=messages, client_tools=body.get("tools") if "tools" in body else None)
         rid, created, name = f"chatcmpl-{uuid.uuid4().hex[:12]}", int(time.time()), model or f"lobes/{profile}"
 

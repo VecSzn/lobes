@@ -14,7 +14,6 @@ from starlette.concurrency import run_in_threadpool
 from starlette.responses import JSONResponse, StreamingResponse
 
 from . import api, providers
-from .task import ALIASES, EFFORT
 
 
 def _tools(tools):
@@ -157,8 +156,7 @@ def make_route(cfg, default_profile=None):
         messages, goal, images = api._messages(_messages(body), imgdir)
         if goal is None:
             return JSONResponse({"error": {"message": "input needs a user message"}}, status_code=400)
-        effort = (body.get("reasoning") or {}).get("effort")
-        c = dict(cfg, effort=effort) if effort in EFFORT or effort in ALIASES else cfg     # codex also sends minimal
+        c = api.with_effort(cfg, (body.get("reasoning") or {}).get("effort"))
         kw = dict(profile=profile, images=images, messages=messages, client_tools=tools if "tools" in body else None)
         head = {"id": f"resp_{uuid.uuid4().hex[:24]}", "object": "response", "created_at": int(time.time()),
                 "model": model or f"lobes/{profile}", "status": "in_progress", "output": []}

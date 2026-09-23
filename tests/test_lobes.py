@@ -550,6 +550,25 @@ def test_api_passes_a_server_error_on_so_a_client_can_compact(tmp_path, monkeypa
         500, {"message": "Context size has been exceeded.", "type": "server_error", "code": None})
 
 
+def test_api_keeps_the_default_effort_for_a_level_it_lacks(tmp_path, monkeypatch):
+    # reasoning_effort minimal used to fail the whole request with a 500
+    from starlette.testclient import TestClient
+    from lobes import api
+    seen = []
+
+    def run(cfg, goal, **kw):
+        seen.append(cfg.get("effort"))
+        state = TaskState("t", goal, [])
+        state.answer = "hi"
+        return state
+    monkeypatch.setattr(api, "run", run)
+    with TestClient(server.make_app(dict(config.load(), _root=tmp_path, effort="medium"))) as client:
+        for level in ("minimal", "low"):
+            body = {"messages": [{"role": "user", "content": "hi"}], "reasoning_effort": level}
+            assert client.post("/v1/chat/completions", json=body).status_code == 200
+    assert seen == ["medium", "low"]
+
+
 def test_provider_stream_assembles_the_same_reply(monkeypatch):
     import contextlib
     lines = ['data: {"choices":[{"delta":{"reasoning_content":"think"}}]}',
