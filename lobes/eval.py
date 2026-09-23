@@ -10,6 +10,7 @@ import sys
 import tempfile
 import threading
 import time
+import zlib
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -308,7 +309,9 @@ class Vram(threading.Thread):
 
 
 def run_item(cfg, cond, seed, suite, item, vram, tag=""):
-    c = dict(cfg, seed=seed, **{k: v for k, v in spec(cond).items() if k != "profile"})
+    # Same seed on every item gave every item the same first random draw, id keeps items apart, conditions share an item's draws, mask skips 0xFFFFFFFF (random in llama.cpp)
+    item_seed = zlib.crc32(f"{seed}:{item['id']}".encode()) & 0x7FFFFFFF
+    c = dict(cfg, seed=item_seed, **{k: v for k, v in spec(cond).items() if k != "profile"})
     task_id = f"eval-{tag + '-' if tag else ''}{cond}-s{seed}-{item['id']}"   # tagged runs keep their own traces
     shutil.rmtree(cfg["_root"] / "runs" / task_id, ignore_errors=True)
     vram.peak = 0

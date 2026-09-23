@@ -144,7 +144,7 @@ relay 本身也可以按 profile 覆盖（lobes.yaml 的 `relays: {profile: {...
 
 CLI：`install`、`serve`、`models`、`load`、`unload`、`ask`、`eval`、`api`，另有 `providers test`。`lobes api` 在 8090 开两个端点：`/v1/chat/completions`（`lobes-v1` 走 v1 profile，`lobes/<名字>` 走任意 profile）和 `/v1/responses`（Codex 从 chat completions 换过去之后说的那套）。请求自带 `tools` 时，工具调用交回客户端跑；不带就用本地的。`stream=true` 时接力的每一步作为 `reasoning_content` 发出去，答案作为 `content`。
 
-provider 只有一个接口：`providers.chat(provider, model, messages, *, schema, choices, images, thinking, thinking_budget, tools, temperature, max_tokens, seed, timeout, ctx, on_delta) -> Reply`，一个 OpenAI 兼容适配器同时覆盖 llama-server 和 LM Studio。`choices` 是几个词，转成 llama-server 的 `grammar`。思考开关每次显式发 `chat_template_kwargs.enable_thinking`。种子每次调用加上调用序号。
+provider 只有一个接口：`providers.chat(provider, model, messages, *, schema, choices, images, thinking, thinking_budget, tools, temperature, max_tokens, seed, timeout, ctx, on_delta) -> Reply`，一个 OpenAI 兼容适配器同时覆盖 llama-server 和 LM Studio。`choices` 是几个词，转成 llama-server 的 `grammar`。思考开关每次显式发 `chat_template_kwargs.enable_thinking`。种子加上的是这个 lobe 自己已经调用过的次数，所以前面先调了别的 lobe，也不会让它的种子变掉。`lobes eval` 还会把题号混进种子，这样不同的题不会共用同一串随机数，同一道题在各个条件下拿到的随机数则一样。
 
 runner.py 一条直线，状态是 `task.py` 的 `TaskState`，除了请求本身分三组：`turn` 是这一轮定下的（路线、话题、时间、要求、打回），客户端的工具步骤会原样拿回；`work` 是解题中间产物（对话、跑过的工具、观察、草稿）；`spend` 是用量和上限。每步追加写 `runs/<task_id>/trace.jsonl`，记录类型有 start、model、intake、requirements、call、thought_only、tool、cut、stalled、review、cap、stop、language_error、final。工具的原始结果各存一个 json。
 

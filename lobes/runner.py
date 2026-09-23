@@ -102,6 +102,7 @@ class Ctx:
             for name, op, ms, vram in self.mm.events[n:]:
                 self.trace.write("model", lobe=lobe, name=name, op=op, ms=ms, vram_mb=vram)
                 spend.swaps += op == "load"
+        # Counted per lobe, a classifier call before the solver doesn't change the solver's seed
         seed = self.cfg.get("seed")
         live = None
         if state.on_delta and lobe in ("reasoning", "language", "check"):
@@ -125,7 +126,7 @@ class Ctx:
             r = providers.chat(self.cfg["providers"][prov], model, messages, schema=schema, choices=choices, images=images,
                                thinking=bool(think), thinking_budget=min(think, max_tokens // 2) if think else None,
                                tools=tools, temperature=temperature, max_tokens=max_tokens,
-                               seed=None if seed is None else seed + len(spend.calls),
+                               seed=None if seed is None else seed + sum(c[0] == lobe for c in spend.calls),
                                timeout=self.effort["seconds"] if over else max(0.1, self.effort["seconds"] - spend.ms() / 1000),
                                ctx=mcfg.get("ctx") or self.cfg.get("llama", {}).get("ctx"), on_delta=live)
         except httpx.TimeoutException as exc:

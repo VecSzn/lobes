@@ -420,9 +420,11 @@ def test_review_server_error_keeps_the_draft(simulate, error):
     assert any(record["kind"] == "language_error" for record in trace)
 
 
-def test_each_call_gets_its_own_seed(simulate):
+def test_a_lobes_seed_counts_only_its_own_calls(simulate):
+    # Counting every call put the solver on seed 1 behind the classifier, seed 0 without it
     _, seen, _ = simulate("x", {"reasoning": [calls(("python", {"code": "print(1)"})), "1"], "language": ["OK"]})
-    assert [kw["seed"] for *_, kw in seen] == [7, 8, 9, 10]
+    assert [(lobe, kw["seed"]) for lobe, _, kw in seen] == [("executive", 7), ("reasoning", 7), ("reasoning", 8),
+                                                              ("language", 7)]
 
 
 def test_call_cap_ends_a_tool_loop_with_the_answer_it_has(simulate, monkeypatch):
@@ -745,7 +747,11 @@ def test_raw_condition(monkeypatch):
     vram = type("V", (), {"peak": 0})()
     rec = ev.run_item(cfg, "R", 4, "gsm8k", {"id": "g1", "prompt": "how many", "gold": "18"}, vram)
     assert rec["correct"] and rec["calls"] == 1 and rec["swaps"] == 0
-    assert sent[0][0][0]["content"].endswith(ev.RAW_TAIL) and sent[0][1]["seed"] == 4
+    assert sent[0][0][0]["content"].endswith(ev.RAW_TAIL)
+    ev.run_item(cfg, "R", 4, "gsm8k", {"id": "g1", "prompt": "how many", "gold": "18"}, vram)
+    ev.run_item(cfg, "R", 4, "gsm8k", {"id": "g2", "prompt": "how many", "gold": "18"}, vram)
+    g1, again, g2 = (kw["seed"] for _, kw in sent)
+    assert g1 == again != g2    # an item keeps its draws, and items don't share them
     text["reply"] = "Sure:\n```python\ndef add(a, b):\n    return a + b\n```\nthat is all"
     he = {"id": "h1", "prompt": "add", "entry_point": "add", "source": "def add(a, b):\n", "test": "def check(c):\n    assert c(1, 2) == 3\n"}
     assert ev.run_item(cfg, "R", 4, "humaneval", he, vram)["correct"]
