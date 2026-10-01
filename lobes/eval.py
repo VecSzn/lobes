@@ -444,7 +444,8 @@ def report(quick=False, tag=""):
     if len(once) != len(recs):
         print(f"# {len(recs) - len(once)} repeated records ignored, first pass kept", file=sys.stderr)
     recs = once
-    conds = [c for c in CONDITIONS if any(r["cond"] == c for r in recs)]
+    have = {r["cond"] for r in recs}
+    conds = [c for c in CONDITIONS if c in have] + sorted(have - CONDITIONS.keys())
     out = []
 
     def cell(rs, f):

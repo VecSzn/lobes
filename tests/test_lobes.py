@@ -793,6 +793,18 @@ def test_eval_record(tmp_path, monkeypatch):
     assert ev.run_item(cfg, "D", 0, "humaneval", he, vram)["correct"]
 
 
+def test_eval_report_keeps_profile_named_conditions(tmp_path, monkeypatch):
+    from lobes import eval as ev
+    rec = {"seed": 0, "suite": "gsm8k", "id": "g1", "correct": True, "tokens": {"total_tokens": 100}, "ms": 1000,
+           "swaps": 0, "stuck": False, "vram_peak_mb": 1}
+    (tmp_path / "t").mkdir()
+    (tmp_path / "t" / "x-s0.jsonl").write_text("\n".join(json.dumps(dict(rec, cond=c)) for c in ("specialists", "D", "bare-4b")),
+                                               encoding="utf-8")
+    monkeypatch.setattr(ev, "RESULTS", tmp_path)
+    # the README runs are named after profiles and used to print empty tables
+    assert "| suite | D | bare-4b | specialists |" in ev.report(tag="t")
+
+
 def test_ids_select_items_past_the_default_slice(monkeypatch):
     from lobes import eval as ev
     monkeypatch.setattr(ev, "load_suite", lambda suite: [{"id": f"{suite}-{i}"} for i in range(300)])
