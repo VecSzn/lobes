@@ -120,7 +120,7 @@ Every level runs the same relay with the same hand-offs. A level only sets how l
 
 `auto`, `xhigh` and `max` are accepted as medium, high and high. The entry points are `effort:` in lobes.yaml, `lobes ask --effort`, and `reasoning_effort` in the api.
 
-The relay itself can be overridden per profile through `relays: {profile: {...}}` in lobes.yaml: `think` is effort, off, escalate or first, and a model with its own `think` in lobes.yaml wins; `checks_on` is hard or all; `language` is review or requirements; `checks` lists the checks per level; `recheck` decides whether a checker that passed reads the draft again.
+The relay itself can be overridden per profile through `relays: {profile: {...}}` in lobes.yaml: `think` is first by default, where only the first call of a draft or a rewrite thinks and the steps after a tool result don't, or effort, off or escalate, and a model with its own `think` in lobes.yaml wins; `checks_on` is hard or all; `language` is review or requirements; `checks` lists the checks per level; `recheck` decides whether a checker that passed reads the draft again.
 
 ## VRAM
 

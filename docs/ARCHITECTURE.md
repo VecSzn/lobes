@@ -120,7 +120,7 @@ reasoning 用一句话告诉工具手要什么。motor 先调一轮工具，第�
 
 `auto`、`xhigh`、`max` 分别当 medium、high、high 收下。入口是 lobes.yaml 的 `effort:`、`lobes ask --effort`、api 的 `reasoning_effort`。
 
-relay 本身也可以按 profile 覆盖（lobes.yaml 的 `relays: {profile: {...}}`）：`think` 有 effort / off / escalate / first 四种，某个模型在 lobes.yaml 里写了自己的 `think` 就以它为准；`checks_on` 是 hard 或 all；`language` 是 review 或 requirements；`checks` 按档列出要走的检查；`recheck` 决定通过过的检查者要不要再读一遍。
+relay 本身也可以按 profile 覆盖（lobes.yaml 的 `relays: {profile: {...}}`）：`think` 默认是 first，一份草稿或一次重写只有第一次调用思考，拿到工具结果之后的几步不思考，另外还有 effort / off / escalate，某个模型在 lobes.yaml 里写了自己的 `think` 就以它为准；`checks_on` 是 hard 或 all；`language` 是 review 或 requirements；`checks` 按档列出要走的检查；`recheck` 决定通过过的检查者要不要再读一遍。
 
 ## 显存
 

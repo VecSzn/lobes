@@ -143,3 +143,8 @@ profiles:
     reasoning:  local/qwen3.5-4b-vl
     motor:      local/qwen3.5-4b-vl
     language:   passthrough
+
+# the bare controls think on every call, the way the model runs on its own
+relays:
+  bare-9b: {think: effort}
+  bare-4b: {think: effort}

@@ -16,7 +16,7 @@ from .task import ALIASES, ANSWER, EFFORT, SIMPLE_THINK, BudgetExceeded, TaskSta
 # checks: per level, what reads a final answer before it ships, in order. "language" is the review model,
 # "check" the expert rereading its own draft. a rejected draft is rewritten before the next check; the last
 # check's rejection only gets noted.
-RELAY = {"think": "effort",       # effort: as the level says | off: never | escalate: only a rewrite thinks
+RELAY = {"think": "first",        # effort: as the level says | off: never | escalate: only a rewrite thinks
                                   # | first: only the first call of a draft or rewrite thinks
                                   # a model can override this with its own think: in lobes.yaml
          "checks_on": "hard",      # hard: the hard route's answers | all: every answer

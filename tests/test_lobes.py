@@ -139,7 +139,7 @@ def test_simple_request_uses_tools_without_thinking_or_review(simulate):
         "reasoning": [calls(("python", {"code": "print('12:00')"})), "It is 12:00."]})
     assert state.answer == "It is 12:00." and state.turn.route == "simple"
     assert [lobe for lobe, *_ in seen] == ["executive", "reasoning", "reasoning"]
-    assert [kw["thinking_budget"] for *_, kw in seen] == [None, task.SIMPLE_THINK, task.SIMPLE_THINK]
+    assert [kw["thinking_budget"] for *_, kw in seen] == [None, task.SIMPLE_THINK, None]
     assert seen[2][1][1]["tool_calls"][0]["function"]["name"] == "python"
     assert seen[2][1][-1] == {"role": "tool", "tool_call_id": "c0", "content": "12:00"}
     assert {t["function"]["name"] for t in seen[1][2]["tools"]} == {"python", "motor"}
@@ -150,7 +150,7 @@ def test_hard_request_thinks_at_its_level_and_a_passing_review_ships_the_draft(s
         "reasoning": [calls(("python", {"code": "print(17 * 23)"})), "17 boxes hold 391 parts."],
         "language": ["OK"]}, effort="low")
     assert state.answer == "17 boxes hold 391 parts." and not state.turn.problems
-    assert [kw["thinking_budget"] for lobe, _, kw in seen if lobe == "reasoning"] == [1024, 1024]
+    assert [kw["thinking_budget"] for lobe, _, kw in seen if lobe == "reasoning"] == [1024, None]
     lobe, messages, kw = seen[-1]
     assert lobe == "language" and kw["tools"] is None
     work = messages[-1]["content"]
