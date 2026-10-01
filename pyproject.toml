@@ -18,7 +18,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8"]
-eval = ["pandas>=2", "pyarrow>=15"]
+eval = ["pandas>=2", "pyarrow>=15", "math-verify>=0.9", "absl-py>=2", "immutabledict>=4", "langdetect>=1.0.9", "nltk>=3.9"]
 ocr = ["rapidocr-onnxruntime>=1.4"]   # second reader for images, cpu, ~2 s per image
 
 [project.scripts]
