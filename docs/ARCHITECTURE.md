@@ -170,7 +170,7 @@ Lobes/
 
 `lobes eval` 跑题库，一道题一行 JSONL，可以断点续跑。条件是 lobes.yaml 里的 profile，也可以用 `lobes/eval.py` 的 `CONDITIONS` 里预注册的代号。结果落在 `eval/results/<tag>/<条件>-s<种子>.jsonl`，tag 把不同代码版本和不同机器的结果分开。
 
-判分全是代码，没有模型裁判：GSM8K 比最后一个数，HumanEval 和 MBPP+ 跑官方测试，ifeval、math500、bfcl、livecodebench 用各自上游的判分器（`lobes/hard/`，官方代码原样 vendored）。每道题记对错、弃答、token、秒、换模次数、显存峰值、调用数、走的哪条路线、撞没撞上限。
+判分全是代码，没有模型裁判：GSM8K 和 AIME 要求把答案写在 `\boxed{}` 里，用 math500 的判分器判，HumanEval 和 MBPP+ 跑官方测试，ifeval、math500、bfcl、livecodebench 用各自上游的判分器（`lobes/hard/`，官方代码原样 vendored）。每道题记对错、弃答、token、秒、换模次数、显存峰值、调用数、走的哪条路线、撞没撞上限。
 
 每一轮的假设和阈值都在跑之前写下来，事后偏离了多少也照记。更早那几轮跑的是更早的运行时，数字按当时测到的样子留着。
 

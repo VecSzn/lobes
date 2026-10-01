@@ -171,9 +171,10 @@ def _pick(items, name):
 
 def load_suite(name):
     import pandas as pd
-    if name == "gsm8k":
+    if name == "gsm8k":                         # asked for a \boxed{} answer, the way Qwen and DeepSeek report it
+        from .hard.math500 import TAIL
         df = pd.read_parquet(DATA / "gsm8k_test.parquet")
-        items = [{"id": f"gsm8k-{i}", "prompt": q, "gold": a.split("####")[-1].strip().replace(",", "")}
+        items = [{"id": f"gsm8k-{i}", "prompt": q + TAIL, "gold": a.split("####")[-1].strip().replace(",", "")}
                  for i, (q, a) in enumerate(zip(df.question, df.answer))]
     elif name == "humaneval":
         df = pd.read_parquet(DATA / "humaneval_test.parquet")
@@ -221,8 +222,9 @@ def load_suite(name):
         from .hard.repo import load as _load
         return _load(DATA)
     elif name == "aime":                        # AIME 2025, both papers; every answer is an integer 0 to 999
+        from .hard.math500 import TAIL
         df = pd.read_parquet(DATA / "aime_test.parquet")
-        items = [{"id": f"aime-{i}", "prompt": p, "gold": str(a)} for i, (p, a) in enumerate(zip(df.problem, df.answer))]
+        items = [{"id": f"aime-{i}", "prompt": p + TAIL, "gold": str(a)} for i, (p, a) in enumerate(zip(df.problem, df.answer))]
     elif name == "simpleqa":
         df = pd.read_csv(DATA / "simpleqa_test.csv")
         items = [{"id": f"simpleqa-{i}", "prompt": q, "gold": a} for i, (q, a) in enumerate(zip(df.problem, df.answer))]
@@ -246,8 +248,6 @@ def load_suite(name):
 def judge(suite, item, answer):
     """-> (correct, abstained). The judges do not change between runs."""
     answer = answer or ""
-    if suite in ("gsm8k", "aime"):
-        return same(answer, item["gold"]), False
     if suite in ("humaneval", "humanevalplus"):
         code = re.sub(r"^\s*```\w*\n|\n```\s*$", "", answer.rstrip())   # keep the indentation of body-only answers
         src = code if f"def {item['entry_point']}" in code else item["source"] + code
@@ -264,7 +264,7 @@ def judge(suite, item, answer):
     if suite == "ifeval":                       # prompt-level strict, the figure models publish as "IFEval"
         from .hard.ifeval import judge as _j
         return _j(item, answer)
-    if suite == "math500":                      # lazy import: math_verify drags in sympy, about a second
+    if suite in ("gsm8k", "aime", "math500"):   # lazy import: math_verify drags in sympy, about a second
         from .hard.math500 import judge as _j
         return _j(item, answer)
     if suite == "bfcl":                         # official AST match; prose around the call fails, as on the board
@@ -492,7 +492,7 @@ def report(quick=False, tag=""):
 
 
 if __name__ == "__main__":
-    assert judge("gsm8k", {"gold": "18"}, "She makes $18")[0] and not judge("gsm8k", {"gold": "18"}, "$18 a day, 9 * 2")[0]
+    assert judge("gsm8k", {"gold": "4"}, "\\boxed{4} pens at $25 each")[0] and not judge("gsm8k", {"gold": "18"}, "\\boxed{9}, 18 in all")[0]
     assert judge("aime", {"gold": "70"}, "the sum of the bases is 070")[0] and not judge("aime", {"gold": "70"}, "b = 21")[0]
     assert judge("tools", {"answer": "Monday"}, "It is a Monday.")[0] and judge("tools", {"answer": "391"}, "391")[0]
     he = {"entry_point": "add", "source": "def add(a, b):\n", "test": "def check(c):\n    assert c(1, 2) == 3\n"}
