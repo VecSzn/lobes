@@ -171,7 +171,7 @@ Stack: Python 3.11+, httpx, pydantic v2, typer, rich, pyyaml, pillow, starlette,
 
 `lobes eval` runs the suites, one JSONL line per item, resumable. A condition is a profile from lobes.yaml, or one of the preregistered codes in `CONDITIONS` in `lobes/eval.py`. Results land in `eval/results/<tag>/<condition>-s<seed>.jsonl`, and the tag keeps one code version's run, or one machine's, apart from another's.
 
-Judging is all code, with no model as a judge: GSM8K and AIME ask for the answer in `\boxed{}` and go through the math500 judge, HumanEval and MBPP+ run the official tests, and ifeval, math500, bfcl and livecodebench use their upstream graders, vendored verbatim under `lobes/hard/`. Each item records correctness, abstention, tokens, seconds, swaps, peak VRAM, the number of calls, which route it took, and whether it hit a cap.
+Judging is all code, with no model as a judge: GSM8K, AIME and tools ask for the answer in `\boxed{}`, and their numeric answers go through the math500 judge, HumanEval and MBPP+ run the official tests, and ifeval, math500, bfcl and livecodebench use their upstream graders, vendored verbatim under `lobes/hard/`. Each item records correctness, abstention, tokens, seconds, swaps, peak VRAM, the number of calls, which route it took, and whether it hit a cap.
 
 Each round's hypotheses and thresholds were written down before it ran, and every departure from them afterwards. The earlier rounds ran against earlier runtimes and their numbers are kept as they were measured.
 

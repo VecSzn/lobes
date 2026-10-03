@@ -715,6 +715,7 @@ def test_eval_judge():
     assert ev.judge("gsm8k", {"gold": "19"}, "3 apples and 6 pears.\n18") == (False, False)
     # the last number here is 25, which used to fail a right answer
     assert ev.judge("gsm8k", {"gold": "4"}, "So \\boxed{4} pens, at $25 each.") == (True, False)
+    assert ev.judge("tools", {"answer": "1260"}, "The LCM is \\boxed{1260}.\n1260 / 70 = 18") == (True, False)
     assert ev.code_block("Sure:\n```python\ndef f():\n    pass\n```\nDone.") == "def f():\n    pass\n"
     assert ev.code_block("    return 1\n") == "    return 1\n"
 

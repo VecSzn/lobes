@@ -240,7 +240,10 @@ def load_suite(name):
                 img.write_bytes(df.iloc[it["row"]]["image"]["bytes"])
             it["images"] = [str(img)]
         return chosen
-    else:                                       # tools, multistep: mine, small, all of them
+    elif name == "tools":                       # mine, all of it; math500's "reason step by step" made the answers 29% longer
+        return [dict(it, prompt=it["prompt"] + "\n\nPut your final answer within \\boxed{}.")
+                for it in jsonl(config.ROOT / "eval" / "suites" / "tools.jsonl")]
+    else:                                       # multistep: mine, small, all of it
         return jsonl(config.ROOT / "eval" / "suites" / f"{name}.jsonl")
     return _pick(items, name)
 
@@ -275,8 +278,10 @@ def judge(suite, item, answer):
         return _j(item, answer)
     if suite == "tools":
         g = item["answer"]
-        ok = same(answer, g) if re.fullmatch(r"-?[\d.]+", g) else norm(g) in norm(answer)
-        return ok, False
+        if re.fullmatch(r"-?[\d.]+", g):
+            from .hard.math500 import judge as _j
+            return _j({"gold": g}, answer)
+        return norm(g) in norm(answer), False
     if suite == "repo":                         # abstaining matters here: a model that never found the file says so
         g = item["gold"]
         ok = same(answer, g) if re.fullmatch(r"-?[\d.]+", g) else norm(g) in norm(answer)
