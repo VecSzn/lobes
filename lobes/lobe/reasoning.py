@@ -3,7 +3,7 @@ the web and the screen it asks the motor lobe for in words."""
 import dataclasses
 
 from .. import tools
-from ..task import ANSWER, CONCLUSION, say, stop, stop_repeating
+from ..task import ANSWER, CONCLUSION, say, stop
 from . import motor
 
 MOTOR = tools.spec("motor", "Ask the tool hand to read or write files in the work dir, run shell commands, search the "
@@ -84,9 +84,15 @@ def solve(ctx, state, think, feedback=None):
         if ctx.think_mode(state) == "first":    # the plan is made; the steps after a tool result go without thinking
             think = 0
         # same repeat rule runner.run uses for client calls, but over the whole request, since a model can loop on
-        # a failing call. re-asking without tools doesn't help, the call comes back as text and ships as the answer
+        # a failing call
         if work.ran.count(work.ran[-1]) > 2:
-            stop_repeating(state)
+            # the third time. it has been handing its answer to the tool, so the tools go and it answers in words.
+            # the stop note this replaces shipped instead of code that was right in 9 of 16 stops
+            work.messages.append({"role": "user", "content": "That call has now come back with the same result three "
+                                  "times, so no more tools will run in this request. Write your final answer in your "
+                                  "reply itself, with any code it needs."})
+            specs = []
+            ctx.trace.write("tools_off", tool=work.ran[-1][0])
         elif work.ran[-1] in work.ran[:-1]:
             think = max(think, ctx.effort["think"])
             ctx.trace.write("stalled", tool=work.ran[-1][0])

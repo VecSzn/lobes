@@ -82,7 +82,7 @@ profile 填了专家槽、又填了 `router`、并且请求不带图时，router
 - 回复空、只有思考：把思考当 assistant 轮补回去再问一次，不带思考预算，trace 记一条 `thought_only`。这条在 `Ctx.chat` 里，每个 lobe 都一样。加这条之前，qwen3.5-4b 有一次把同一个失败调用重发了 30 次。再答还是空，就把那段思考当答案。
 - 工具调用的参数写到一半撞上限：什么都不跑，客户端也拿不到这个残缺调用，重试一次给两倍的回复空间并强制思考。第二次还写不完就停下来说清楚。
 - 正文写到一半撞上限：单独再要一次结论，不思考，最多 2048 token，接在草稿后面。结论自己也被截断就丢掉。读的人会把最后一段当答案，在 GPQA 上接上被截的结论，连答案都没有的题反而比只交草稿更多。
-- 同一个 (工具, 参数, 结果) 出现三次就停下，把结果交出去，不再发第四次。出现两次把思考预算抬到本档的上限并记一条 `stalled`。这条规则对客户端跑的工具同样生效，跨整个请求算。
+- 同一个 (工具, 参数, 结果) 出现两次，把思考预算抬到本档的上限并记一条 `stalled`。出现三次就收走工具，让模型用文字把答案写出来，记一条 `tools_off`。客户端跑的工具出现三次仍然是停下并把结果交出去。
 
 撞上限时草稿还没写出来的，`answer_now` 再给一次机会，让模型拿它已经读过、算过的东西作答：一次调用、不给工具、最多 2048 token，跳过上限检查。悬空的工具调用先补一条「没跑，预算用完了」，不然服务器不收这段对话。
 
@@ -146,7 +146,7 @@ CLI：`install`、`serve`、`models`、`load`、`unload`、`ask`、`eval`、`api
 
 provider 只有一个接口：`providers.chat(provider, model, messages, *, schema, choices, images, thinking, thinking_budget, tools, temperature, max_tokens, seed, timeout, ctx, on_delta) -> Reply`，一个 OpenAI 兼容适配器同时覆盖 llama-server 和 LM Studio。`choices` 是几个词，转成 llama-server 的 `grammar`。思考开关每次显式发 `chat_template_kwargs.enable_thinking`。种子加上的是这个 lobe 自己已经调用过的次数，所以前面先调了别的 lobe，也不会让它的种子变掉。`lobes eval` 还会把题号混进种子，这样不同的题不会共用同一串随机数，同一道题在各个条件下拿到的随机数则一样。
 
-runner.py 一条直线，状态是 `task.py` 的 `TaskState`，除了请求本身分三组：`turn` 是这一轮定下的（路线、话题、时间、要求、打回），客户端的工具步骤会原样拿回；`work` 是解题中间产物（对话、跑过的工具、观察、草稿）；`spend` 是用量和上限。每步追加写 `runs/<task_id>/trace.jsonl`，记录类型有 start、model、intake、requirements、call、thought_only、tool、cut、stalled、review、cap、stop、language_error、final。工具的原始结果各存一个 json。
+runner.py 一条直线，状态是 `task.py` 的 `TaskState`，除了请求本身分三组：`turn` 是这一轮定下的（路线、话题、时间、要求、打回），客户端的工具步骤会原样拿回；`work` 是解题中间产物（对话、跑过的工具、观察、草稿）；`spend` 是用量和上限。每步追加写 `runs/<task_id>/trace.jsonl`，记录类型有 start、model、intake、requirements、call、thought_only、tool、cut、stalled、tools_off、review、cap、stop、language_error、final。工具的原始结果各存一个 json。
 
 模块之间只传一样结构化的东西：`schema.py` 的 `Observation`（source、ref、summary），感知写、材料读。其余都是纯文本和 `TaskState` 的字段。
 

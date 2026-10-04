@@ -245,21 +245,23 @@ def test_a_conclusion_that_is_itself_cut_off_is_dropped(simulate):
     assert [lobe for lobe, _, _ in seen if lobe == "reasoning"] == ["reasoning"] * 2      # and is not asked again
 
 
-def test_a_call_lobes_runs_that_repeats_with_the_same_result_thinks_then_stops_with_the_result(simulate):
+def test_a_call_lobes_runs_that_repeats_with_the_same_result_thinks_then_answers_without_tools(simulate):
     again = calls(("python", {"code": "x = 1"}))
     state, seen, trace = simulate("what is x", {"executive": ["easy"], "reasoning": [again, again, again, "x is 1"]},
                                   relays={"specialists": {"think": "off"}})
-    assert state.answer.startswith("python returned the same result three times")
-    asked = [kw for lobe, _, kw in seen if lobe == "reasoning"]
-    assert [kw["thinking_budget"] for kw in asked] == [None, None, task.EFFORT["medium"]["think"]]
-    assert [r["tool"] for r in trace if r["kind"] == "stalled"] == ["python"] and not state.spend.capped and state.stopped
+    assert state.answer == "x is 1" and not state.stopped and not state.spend.capped
+    asked = [(msgs, kw) for lobe, msgs, kw in seen if lobe == "reasoning"]
+    think = task.EFFORT["medium"]["think"]
+    assert [kw["thinking_budget"] for _, kw in asked] == [None, None, think, think]
+    assert [bool(kw["tools"]) for _, kw in asked] == [True, True, True, False]      # the third time takes the tools away
+    assert asked[3][0][-1]["role"] == "user" and "three times" in asked[3][0][-1]["content"]
+    assert [r["tool"] for r in trace if r["kind"] in ("stalled", "tools_off")] == ["python", "python"]
     # two snippets sent in turn, each failing the same way. the call cap used to end this one
     n, other = len(seen), calls(("python", {"code": "y = 2"}))
     state, seen, trace = simulate("what is x", {"executive": ["easy"], "reasoning": [again, other, again, other, again, "x is 1"]},
                                   relays={"specialists": {"think": "off"}})
-    think = task.EFFORT["medium"]["think"]
-    assert [kw["thinking_budget"] for lobe, _, kw in seen[n:] if lobe == "reasoning"] == [None, None, None, think, think]
-    assert len([r for r in trace if r["kind"] == "stalled"]) == 2 and state.stopped and not state.spend.capped
+    assert [kw["thinking_budget"] for lobe, _, kw in seen[n:] if lobe == "reasoning"] == [None, None, None, think, think, think]
+    assert len([r for r in trace if r["kind"] == "stalled"]) == 2 and state.answer == "x is 1" and not state.spend.capped
 
 
 def test_a_call_cut_off_by_the_token_limit_runs_nothing_and_is_retried_with_thinking(simulate):
