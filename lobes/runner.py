@@ -59,7 +59,10 @@ class Ctx:
 
     def think_mode(self, state):
         """The relay's think mode, or the routed expert model's own `think` in lobes.yaml."""
-        return self.cfg["models"].get(self.slot("reasoning", state)[1], {}).get("think") or self.relay["think"]
+        mode = self.cfg["models"].get(self.slot("reasoning", state)[1], {}).get("think")
+        if mode is None:
+            mode = self.relay["think"]
+        return "off" if mode is False else mode     # yaml reads a bare off as false
 
     def is_model(self, lobe):
         """True when the profile fills this slot with a model."""
@@ -250,7 +253,7 @@ def run(cfg, goal, *, profile=None, images=None, task_id=None, messages=None, cl
             work.messages[request_at(messages)]["content"] = reasoning.brief(state)
         think = SIMPLE_THINK if turn.route == "simple" else ctx.effort["think"]
         mode = ctx.think_mode(state)
-        if mode in ("off", False) or (mode == "escalate" and not turn.problems):  # yaml reads off as false
+        if mode == "off" or (mode == "escalate" and not turn.problems):
             think = 0
         if mode == "first" and state.continues:    # a client's tool result: the step's plan already thought
             think = 0
