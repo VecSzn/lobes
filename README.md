@@ -26,7 +26,7 @@ Paired over all 400 items, Lobes is right where its own solver is wrong 60 times
 
 The gain is uneven. MBPP+ moves the most, +13 items at p = 0.004. There the bare 4B reads 1,037k prompt tokens against the relay's 562k, because it keeps every tool result in its own conversation and prefills it again each turn. GPQA barely moves, +2 items at p = 0.815. It mostly asks what a model already knows and calls a tool about twice an item, so there is little for a relay to split up.
 
-All four are 100-item samples taken at an even stride through each published set, seed 0, the same items for every column, measured on an RTX 5090 with four requests in flight. Timings from that box are not what a single user sees; the 4070 numbers are below.
+All four are 100-item samples taken at an even stride through each published set, seed 0, the same items for every column, measured on an RTX 5090 with four requests in flight. Timings from that box are not what a single user sees; the 4070 numbers are below. Every number in this README was measured on [v0.0.1](https://github.com/VecSzn/lobes/releases/tag/v0.0.1). The code on main has changed since and has not been re-measured on these suites.
 
 ---
 
@@ -102,7 +102,7 @@ A reply that runs out of room mid-sentence is asked for its conclusion alone, wh
 
 ## Benchmark results
 
-Every column uses seed 0, the same 100 items per suite, and four requests in flight on an RTX 5090. The items are taken at an even stride through each published set, because the files group items by kind and the first 100 would all be one kind. Both baselines are the model as shipped, with the same eight tools Lobes has and no other lobe around it.
+Every column uses seed 0, the same 100 items per suite, and four requests in flight on an RTX 5090. The items are taken at an even stride through each published set, because the files group items by kind and the first 100 would all be one kind. Both baselines are the model as shipped, with the same eight tools Lobes has and no other lobe around it. Measured on [v0.0.1](https://github.com/VecSzn/lobes/releases/tag/v0.0.1).
 
 ![correct per suite, higher is better](docs/img/suites.svg)
 
