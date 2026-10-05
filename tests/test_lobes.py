@@ -391,6 +391,15 @@ def test_an_expert_model_can_set_its_own_think_mode(simulate):
         "reasoning": ["381 parts", "391 parts"], "language": ["17 x 23 is 391.", "OK"]}, models=models, relays=rewrites())
     assert state.answer == "391 parts"
     assert [kw["thinking_budget"] for lobe, _, kw in seen if lobe == "reasoning"] == [None, task.EFFORT["medium"]["think"]]
+    # a bare `think: off` loads from the yaml as False, and still has to win over the relay's mode
+    n, models = len(seen), {**cfg["models"], expert: {**cfg["models"][expert], "think": False}}
+    _, seen, _ = simulate("How many parts in 17 boxes of 23?", {"reasoning": ["391 parts"], "language": ["OK"]},
+                          models=models, relays={"specialists": {"think": "effort"}})
+    assert [kw["thinking_budget"] for lobe, _, kw in seen[n:] if lobe == "reasoning"] == [None]
+    n = len(seen)       # and the same bare off under relays:
+    _, seen, _ = simulate("How many parts in 17 boxes of 23?", {"reasoning": ["391 parts"], "language": ["OK"]},
+                          relays={"specialists": {"think": False}})
+    assert [kw["thinking_budget"] for lobe, _, kw in seen[n:] if lobe == "reasoning"] == [None]
 
 
 def test_a_client_call_repeated_with_the_same_result_is_read_with_thinking(simulate):
