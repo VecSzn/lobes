@@ -652,12 +652,13 @@ def test_api_stops_the_run_when_a_streaming_client_goes_away(tmp_path, monkeypat
     import asyncio
     import threading
     from lobes import api
-    started, result = threading.Event(), {}
+    started, cancelled = threading.Event(), threading.Event()
 
     def run(cfg, goal, *, on_delta=None, cancel=None, **kw):
         on_delta("reasoning", "thinking")
         started.set()
-        result["cancelled"] = cancel.wait(5)
+        if cancel.wait(5):
+            cancelled.set()
         return TaskState("t", goal, [])
     monkeypatch.setattr(api, "run", run)
     app = server.make_app(dict(config.load(), _root=tmp_path))
@@ -677,7 +678,7 @@ def test_api_stops_the_run_when_a_streaming_client_goes_away(tmp_path, monkeypat
              "scheme": "http", "path": "/v1/chat/completions", "raw_path": b"/v1/chat/completions", "root_path": "",
              "query_string": b"", "headers": [(b"content-type", b"application/json")], "client": ("t", 1), "server": ("t", 80)}
     asyncio.run(app(scope, receive, send))
-    assert result["cancelled"]
+    assert cancelled.wait(5)        # the app returns before the worker thread has woken from its wait
 
 
 def test_a_cancelled_request_stops_mid_stream_and_makes_no_more_calls(tmp_path, monkeypatch):
